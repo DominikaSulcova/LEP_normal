@@ -949,7 +949,7 @@ load(output_file, 'NLEP_info');
 
 % crop the ERP data
 fprintf('cropping ERP data...')
-file2crop = dir(sprintf('*%s*%s*.mat', param.prefix_ERP, NLEP_info.single_subject(subject_idx).ID));
+file2crop = dir(sprintf('%s*%s*.mat', param.prefix_ERP, NLEP_info.single_subject(subject_idx).ID));
 if length(file2crop) == param.n_files(1)
     for d = 1:length(file2crop)
         % load data and header
@@ -1368,7 +1368,7 @@ clear prompt dlgtitle dims definput input
 addpath(genpath([folder.toolbox '\letswave 7']));
 
 % identify LEP datasets to process
-folder.input = uigetdir(pwd, 'Coose the input folder');            
+folder.input = uigetdir(pwd, 'Choose the input folder');            
 file2process = [dir(sprintf('%s\\%s_%s\\%s*%s LEP*.mat', folder.input, study, NLEP_info.single_subject(subject_idx).ID, param.prefix{1}, NLEP_info.single_subject(subject_idx).ID)); ...
     dir(sprintf('%s\\%s_%s\\%s*%s LEP*.mat', folder.input, study, NLEP_info.single_subject(subject_idx).ID, param.prefix{2}, NLEP_info.single_subject(subject_idx).ID))];
 
@@ -1966,7 +1966,7 @@ fprintf('done.\n')
 
 % extract average peak values for all peaks
 figure_counter = 1; 
-for subject_idx = 1:length(NLEP_info.single_subject)
+for subject_idx = 7%1:length(NLEP_info.single_subject)
     % launch the output figure
     fig = figure(figure_counter);
     set(fig, 'Position', [50, 30, 750, 750])
@@ -3394,8 +3394,8 @@ save(output_file, 'NLEP_info', '-append');
 clear i NLEP_info_Domi
 
 % load again the 'dataset' variable
-file2import = dir(sprintf('*ds*S032*.mat'));
-seq = [8, 7, 6, 5, 3, 4, 1, 2, 11, 12, 9, 10];
+file2import = dir(sprintf('ds*S017*.mat'));
+seq = 1; %[8, 7, 6, 5, 3, 4, 1, 2, 11, 12, 9, 10];
 for d = 1:length(seq)
     load(file2import(seq(d)).name)
     load(sprintf('%s.lw6', file2import(seq(d)).name(1:end-4)), '-mat')

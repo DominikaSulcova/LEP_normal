@@ -69,13 +69,16 @@ end
 fclose(fileID);
 
 % remove specific events from specific datasets
-a = 31; 
+a = 18; 
 dataset = 'cond1';
-trial = 30 + [1:4, 30];
-c = find(strcmp(NLEP_data_1to35.RSEEG(a).dataset, dataset));
+% dataset = {'LEP hand left b2 - ready'};
+trial = 31;
 % if RSEEG
-for b = fieldnames(NLEP_data_1to35.RSEEG(a).PSD_st)'
-    NLEP_data_1to35.RSEEG(a).PSD_st(c).(b{1})(trial, :, :) = [];
+for d = 1:length(dataset)
+    c = find(strcmp(NLEP_data_1to35.RSEEG(a).dataset, dataset{d}));
+    for b = fieldnames(NLEP_data_1to35.RSEEG(a).PSD_st)'
+        NLEP_data_1to35.RSEEG(a).PSD_st(c).(b{1})(trial, :, :) = [];
+    end
 end
 % if LEP
 for b = {'unfiltered' 'CWT_filtered'}   
@@ -84,24 +87,32 @@ for b = {'unfiltered' 'CWT_filtered'}
     end
 end
 NLEP_data_1to35.LEP(a).blocks{str2double(regexp(dataset, '\d+', 'match', 'once'))}(trial) = [];
+save(input_file, 'NLEP_info', 'NLEP_data_1to35', '-append')
 
-for a = fieldnames(NLEP_measures(15).LEP_ST)'
+% remove specific measures
+s = 17; 
+c = 1;
+trial = 32;
+for a = fieldnames(NLEP_measures(s).LEP_ST)'
     if ~strcmp(a{1}, 'conditions') 
-        % for b = 1:3
-        %     NLEP_measures(15).LEP_ST.(a{1})(b, 2, 31) = 0;
-        %     idx = NLEP_measures(15).LEP_ST.(a{1})(b, 2, :) ~= 0;
-        %     data = NLEP_measures(15).LEP_ST.(a{1})(b, 2, idx);
-        %     data(1, 1, end+1:61) = 0;
-        %     NLEP_measures(15).LEP_ST.(a{1})(b, 2, :) = data;
-        % end
-        NLEP_measures(15).LEP_ST.(a{1})(:, :, 61) = [];
+        for b = 1:3
+            NLEP_measures(s).LEP_ST.(a{1})(b, c, trial) = 0;
+            idx = NLEP_measures(s).LEP_ST.(a{1})(b, c, :) ~= 0;
+            data = NLEP_measures(s).LEP_ST.(a{1})(b, c, idx);
+            data(1, 1, end+1:60) = 0;
+            NLEP_measures(s).LEP_ST.(a{1})(b, c, :) = data;
+        end
     end
 end
-
-% save NLEP output when the events are manually corrected 
 save(input_file, 'NLEP_measures', '-append')
 
+% check data in letswave
+addpath(genpath([folder.toolbox '\letswave 7']));
+letswave
 
+%% import data and existing measures 
+
+%% 
 
 % ----- section input -----
 param.prefix_data = {'icfilt ica_all chunked' 'icfilt ica_all RS'};
