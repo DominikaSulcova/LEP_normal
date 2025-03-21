@@ -7,8 +7,19 @@ cd(folder.output)
 
 % input & output 
 study = 'AperiodicPFC';
-input_file = sprintf('%s\\NLEP_output.mat', folder.output);
+input_file = sprintf('%s\\NLEP_output.mat', folder.input);
 output_file = sprintf('%s\\%s_output.mat', folder.output, study);
+load(input_file, 'NLEP_info', 'NLEP_data', 'NLEP_data_1to35', 'NLEP_measures')
+
+% dataset
+params.subjects = 45;
+params.area = {'hand' 'foot'};
+params.side = {'right' 'left'}; 
+params.block = {'b1' 'b2'};
+params.LEP_comps = {'N1' 'N2' 'P2'}; 
+
+% graphics
+figure_counter = 1;
 
 %% final data check
 % check for extra/missing events --> generate .txt report
@@ -110,10 +121,206 @@ save(input_file, 'NLEP_measures', '-append')
 addpath(genpath([folder.toolbox '\letswave 7']));
 letswave
 
-%% import data and existing measures 
+%% import existing measures and pre-processed data
+% ----- section input -----
+params.prestim_time = 'ready';
+% -------------------------
+% extract LEP measures and pain ratings
+for s = 1:params.subjects
+    % subject info
+    AperiodicPFC_measures(s).ID = NLEP_info.single_subject(s).ID;
+    AperiodicPFC_measures(s).age = NLEP_info.single_subject(s).age;
+    AperiodicPFC_measures(s).male = NLEP_info.single_subject(s).male;
+    AperiodicPFC_measures(s).handedness_score = NLEP_info.single_subject(s).handedness;
+    if NLEP_info.single_subject(s).handedness >= 0.3
+        AperiodicPFC_measures(s).handedness = 'right';
+    elseif NLEP_info.single_subject(s).handedness <= -0.3
+        AperiodicPFC_measures(s).handedness = 'left';
+    else
+        AperiodicPFC_measures(s).handedness = 'bilateral';
+    end
 
-%% 
+    % session info
+    for c = 1:2
+        condition = split(NLEP_info.single_subject(s).condition{c}, '_');
+        AperiodicPFC_measures(s).conditions(c).condition = c; 
+        AperiodicPFC_measures(s).conditions(c).area = condition{1}; 
+        AperiodicPFC_measures(s).conditions(c).side = condition{2}; 
+    end
 
+    % LEP peak measures
+    for c = 1:2
+        if contains(NLEP_measures(s).LEP_ST.conditions{c}, AperiodicPFC_measures(s).conditions(c).area) && ...
+                contains(NLEP_measures(s).LEP_ST.conditions{c}, AperiodicPFC_measures(s).conditions(c).side)
+            AperiodicPFC_measures(s).LEP(c).condition = c;
+            for a = 1:length(params.LEP_comps)
+                % extract amplitude and latency
+                AperiodicPFC_measures(s).LEP(c).(params.LEP_comps{a}).amplitude = squeeze(NLEP_measures(s).LEP_ST.amplitude(a, c, :))';
+                AperiodicPFC_measures(s).LEP(c).(params.LEP_comps{a}).latency = squeeze(NLEP_measures(s).LEP_ST.latency(a, c, :))';
+                
+                % check for missing events
+                missing{a} = find([AperiodicPFC_measures(s).LEP(c).(params.LEP_comps{a}).amplitude] == 0);
+                AperiodicPFC_measures(s).LEP(c).(params.LEP_comps{a}).amplitude(missing{a}) = [];
+                AperiodicPFC_measures(s).LEP(c).(params.LEP_comps{a}).latency(missing{a}) = [];                
+            end
+
+            % encode trial number
+            if all(cellfun(@(x) isequal(x, missing{1}), missing))
+                AperiodicPFC_measures(s).LEP(c).trials = length([AperiodicPFC_measures(s).LEP(c).(params.LEP_comps{a}).amplitude]);
+            else
+                error('ERROR: subject %d - LEPs - condition %d (%s %s) - the numbers of trials of LEP components do not match!',...
+                    s, c, AperiodicPFC_measures(s).conditions(c).area, AperiodicPFC_measures(s).conditions(c).side)
+            end
+        else
+            error('ERROR: subject %d - LEPs - the conditions do not match!', s)
+        end
+    end
+
+    % pain ratings
+    for c = 1:2
+        % identify ratings associated with this condition
+        idx = false(1, length(NLEP_measures(s).conditions));
+        if size(NLEP_measures(s).pain, 1) == length(NLEP_measures(s).conditions)
+            for b = 1:size(NLEP_measures(s).pain, 1)
+                if contains(NLEP_measures(s).conditions{b}, AperiodicPFC_measures(s).conditions(c).area) && ...
+                        contains(NLEP_measures(s).conditions{b}, AperiodicPFC_measures(s).conditions(c).side) 
+                    idx(b) = true;
+                end
+            end
+        end
+        ratings = NLEP_measures(s).pain(idx, :);
+
+        % encode
+        if AperiodicPFC_measures(s).LEP(c).trials == 60
+            AperiodicPFC_measures(s).pain(c).condition = c;
+            AperiodicPFC_measures(s).pain(c).ratings = ratings(:)';
+            AperiodicPFC_measures(s).pain(c).trials = AperiodicPFC_measures(s).LEP(c).trials;
+
+        else
+            % first check if the missing trials can be explained by removed
+            % epochs, if not, provide missing trials manually
+            fprintf('subject %d - %s %s: missing events (%d)\n', s, AperiodicPFC_measures(s).conditions(c).area, ...
+                AperiodicPFC_measures(s).conditions(c).side, AperiodicPFC_measures(s).LEP(c).trials)
+            removed = {};
+            for b = 1:length(NLEP_info.single_subject(s).preprocessing.ERP(5).params)
+                if contains(NLEP_info.single_subject(s).preprocessing.ERP(5).params(b).dataset, ...
+                        sprintf('LEP %s %s', AperiodicPFC_measures(s).conditions(c).area, AperiodicPFC_measures(s).conditions(c).side))
+                    block = str2double(regexp(NLEP_info.single_subject(s).preprocessing.ERP(5).params(b).dataset, '\d+', 'match', 'once'));
+                    if ~isempty(NLEP_info.single_subject(s).preprocessing.ERP(5).params(b).discarded)                        
+                        removed{block} = NLEP_info.single_subject(s).preprocessing.ERP(5).params(b).discarded;
+                    else
+                       removed{block} = []; 
+                    end
+                end
+            end
+            if ~isempty(removed)
+                % identify indexes of removed trials
+                removed_idx = [removed{1}, removed{2} + 30];
+
+                % filter data if trial numbers match
+                if AperiodicPFC_measures(s).LEP(c).trials == 60 - length(removed_idx)
+                    AperiodicPFC_measures(s).pain(c).condition = c;
+                    AperiodicPFC_measures(s).pain(c).ratings = ratings(:)';
+                    AperiodicPFC_measures(s).pain(c).ratings(removed_idx) = [];
+                    AperiodicPFC_measures(s).pain(c).trials = AperiodicPFC_measures(s).LEP(c).trials;
+                    continue
+
+                else                 
+                    % ask for manual input
+                    fprintf('LEP trials do not match rating trials. Please enter missing trials manually.\n')
+                    prompt = {'b1:', 'b2:'};
+                    dlgtitle = sprintf('subject %d - %s %s', s, AperiodicPFC_measures(s).conditions(c).area, ...
+                        AperiodicPFC_measures(s).conditions(c).side);
+                    dims = [1 50];
+                    definput = {'' ''};
+                    input = inputdlg(prompt,dlgtitle,dims,definput);
+
+                end
+            else
+                % ask for manual input
+                fprintf('LEP trials do not match rating trials. Please enter missing trials manually.\n')
+                prompt = {'b1:', 'b2:'};
+                dlgtitle = sprintf('subject %d - %s %s', s, AperiodicPFC_measures(s).conditions(c).area, ...
+                    AperiodicPFC_measures(s).conditions(c).side);
+                dims = [1 50];
+                definput = {'' ''};
+                input = inputdlg(prompt,dlgtitle,dims,definput);
+            end
+
+            % filter ratings according to manually input trial info
+            removed_idx = [str2num(input{1}), str2num(input{2}) + 30];
+            AperiodicPFC_measures(s).pain(c).condition = c;
+            AperiodicPFC_measures(s).pain(c).ratings = ratings(:)';
+            AperiodicPFC_measures(s).pain(c).ratings(removed_idx) = [];
+            AperiodicPFC_measures(s).pain(c).trials = AperiodicPFC_measures(s).LEP(c).trials;            
+        end
+    end
+end
+save(output_file, 'AperiodicPFC_measures', '-append');
+
+% prepare PSD data for sensor-based analysis
+for s = 1:params.subjects
+    % select source dataset
+    if s <= 35
+        data = NLEP_data_1to35;
+    else
+        data = NLEP_data;
+    end
+
+    % subject & session info
+    AperiodicPFC_data(s).ID = NLEP_info.single_subject(s).ID;
+    AperiodicPFC_data(s).conditions = AperiodicPFC_measures(s).conditions;
+
+    % extract PSD
+    for c = 1:2
+        % subset data associated with this condition
+        psd.original = []; psd.oscillatory = []; psd.fractal = []; 
+        idx = false(1, length(data.RSEEG(s).dataset));
+        for b = 1:length(data.RSEEG(s).dataset)
+            if contains(data.RSEEG(s).dataset{b}, AperiodicPFC_data(s).conditions(c).area) && ...
+                    contains(data.RSEEG(s).dataset{b}, AperiodicPFC_data(s).conditions(c).side) && ...
+                    contains(data.RSEEG(s).dataset{b}, params.prestim_time)
+                idx(b) = true;
+            end
+        end
+        for a = 1:length(data.RSEEG(s).PSD_st)
+            if idx(a)
+                for b = fieldnames(data.RSEEG(s).PSD_st)'
+                    psd.(b{1})(end + 1:end + size(data.RSEEG(s).PSD_st(a).(b{1}), 1), :, :) = data.RSEEG(s).PSD_st(a).(b{1});
+                end
+            end
+        end
+
+        % check if trial numbers match, encode
+        if size(psd.original, 1) == AperiodicPFC_measures(s).LEP(c).trials
+            AperiodicPFC_data(s).PSD(c).condition = c;
+            AperiodicPFC_data(s).PSD(c).trials = AperiodicPFC_measures(s).LEP(c).trials;
+            AperiodicPFC_data(s).PSD(c).freq = data.RSEEG(s).freq;
+            AperiodicPFC_data(s).PSD(c).original = psd.original;
+            AperiodicPFC_data(s).PSD(c).oscillatory = psd.oscillatory;
+            AperiodicPFC_data(s).PSD(c).fractal = psd.fractal;
+        else
+            error('ERROR: sibject %d - %s %s - the reial numbers do not match!', ...
+                s, AperiodicPFC_data(s).conditions(c).area, AperiodicPFC_data(s).conditions(c).side)
+        end
+    end
+end
+save(output_file, 'AperiodicPFC_data', '-append');
+
+% prepare pre-processed data for source-based analysis
+
+% clean and continue
+clear a c s condition missing idx ratings removed removed_idx prompt dlgtitle dims definput input data psd trials
+sprintf('section finished.')
+
+%% sensor-based analysis: extract aperiodic exponent
+
+%% sensor-based analysis: visualization 
+
+%% sensor-based analysis: export for R
+
+
+%%
 % ----- section input -----
 param.prefix_data = {'icfilt ica_all chunked' 'icfilt ica_all RS'};
 param.cond_continuous = {'open' 'close'; 'pre' 'post'};
