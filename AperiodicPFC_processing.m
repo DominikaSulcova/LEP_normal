@@ -310,7 +310,9 @@ save(output_file, 'AperiodicPFC_data', '-append');
 % prepare pre-processed data for source-based analysis
 
 % clean and continue
-clear a c s condition missing idx ratings removed removed_idx prompt dlgtitle dims definput input data psd trials
+clear a b c s condition missing idx ratings removed removed_idx prompt dlgtitle dims definput input ...
+    block data psd trials ...
+    NLEP_data_1to35 NLEP_data NLEP_info NLEP_measures
 sprintf('section finished.')
 
 %% sensor-based analysis: extract aperiodic exponent
