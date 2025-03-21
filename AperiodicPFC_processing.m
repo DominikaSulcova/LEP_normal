@@ -25,6 +25,7 @@ figure_counter = 1;
 params.prestim_time = 'ready';
 params.prefix = {'icfilt ica_all RS' 'ep reref ds notch bandpass dc'};
 % -------------------------
+
 % load NLEP output & AperiodicPFC output, if it already existis
 load(input_file, 'NLEP_info', 'NLEP_data', 'NLEP_data_1to35', 'NLEP_measures')
 if exist(output_file) == 2
@@ -320,12 +321,158 @@ fprintf('section finished.\n\n')
 
 %% sensor-based analysis: extract aperiodic exponent
 % ----- section input -----
+params.eoi_target = {'AF3' 'AFz' 'AF4' 'F3' 'F1' 'F2' 'F4'};
+params.eoi_ctrl = {'PO3' 'POz' 'PO4' 'P3' 'P1' 'P2' 'P4'};
+params.foi = {[5, 50] [5 30] [30 50]};
+params.foi_labels = {'broad' 'low' 'high'};
 % -------------------------
 
+% prepare flip dictionary
+load('dataset_default.lw6', '-mat')
+params.labels = {header.chanlocs.labels};
+params.chanlocs = header.chanlocs;
+labels_flipped = params.labels;
+for i = 1:length(params.labels)
+    electrode_n = str2num(params.labels{i}(end));
+    if isempty(electrode_n)
+    else
+        if electrode_n == 0
+            label_new = params.labels{i}(1:end-2);
+            label_new = [label_new num2str(9)];
+        elseif mod(electrode_n,2) == 1              % odd number --> left hemisphere                    
+            label_new = params.labels{i}(1:end-1);
+            label_new = [label_new num2str(electrode_n + 1)];
+        else                                    % even number --> right hemisphere 
+            label_new = params.labels{i}(1:end-1);
+            label_new = [label_new num2str(electrode_n - 1)];
+        end
+        a = find(strcmpi(params.labels, label_new));
+        if isempty(a)
+        else
+            labels_flipped{i} = label_new;
+        end
+    end
+end
+labels_dict = cat(1, params.labels, labels_flipped)';
 
+% homogenize the fractal PSD data --> flip as if all stimuli were delivered 
+% to the right hand 
+addpath(genpath([folder.toolbox '\letswave 6']));
+row_counter = 1;
+for s = 1:params.subjects
+    for c = 1:2
+        % select the data
+        data = []; 
+        data(:, :, 1, 1, 1, :) = AperiodicPFC_data(s).PSD(c).fractal;  
+
+        % flip if left side stimulated
+        flipped = false;
+        if strcmp(AperiodicPFC_data(s).conditions(c).side, 'left')
+           [header, data, ~] = RLW_flip_electrodes(header, data, labels_dict);
+           flipped = true;
+        end
+
+        % save to the new dataset
+        dataset(row_counter).subject = s;
+        dataset(row_counter).ID = AperiodicPFC_data(s).ID;
+        dataset(row_counter).freq = AperiodicPFC_data(s).PSD(c).freq;
+        dataset(row_counter).area = AperiodicPFC_data(s).conditions(c).area;
+        dataset(row_counter).flipped = flipped;
+        dataset(row_counter).data = squeeze(data);
+
+        % update row counter
+        row_counter = row_counter + 1;
+    end
+end
+
+% extract aperiodic measures for each subject/area/trial/electrode/foi
+for d = 1:length(dataset)
+    % provide update
+    fprintf('extracting aperiodic measures: subject %d - %s\n', dataset(d).subject, dataset(d).area)
+
+    % encode doi
+    for f = 1:length(params.foi)
+        dataset(d).foi(f).label = params.foi_labels{f};
+        dataset(d).foi(f).limits = params.foi{f};
+    end
+    
+    % fit PSD
+    for a = 1:size(dataset(d).data, 1)
+        for b = 1:size(dataset(d).data, 2)
+            for c = 1:length(params.foi)
+                % subset the data
+                data = squeeze(dataset(d).data(a, b, :))';
+                freq_idx = dataset(d).freq >= dataset(d).foi(c).limits(1) & dataset(d).freq <= dataset(d).foi(c).limits(2);
+                roi.freq = dataset(d).freq(freq_idx);
+                roi.psd = data(freq_idx);
+
+                % log-transform 
+                roi.freq_log = log10(roi.freq);
+                roi.psd_log  = log10(roi.psd);
+
+                % perform standard linear regression
+                fit.polyfit = polyfit(roi.freq_log, roi.psd_log, 1);
+
+                % perform robust linear regression
+                [fit.robust, ~] = robustfit(roi.freq_log, roi.psd_log);
+                fit.robust = fit.robust([2, 1])';
+
+                % save to the dataset
+                dataset(d).exponent_polyfit(a, b, c) = -fit.polyfit(1);
+                dataset(d).offset_polyfit(a, b, c) = fit.polyfit(2);
+                dataset(d).exponent_robust(a, b, c) = -fit.robust(1);
+                dataset(d).offset_robust(a, b, c) = fit.robust(2);
+            end
+        end
+    end
+
+    % output mean differences between polyfit and rubust regression at each
+    % electrode
+    screen_size = get(0, 'ScreenSize');
+    figure(figure_counter)
+    set(gcf, 'Position', [1, screen_size(4)/4, screen_size(3), screen_size(4) / 2])
+    for f = 1:length(params.foi)
+        % calculate mean difference per electrode
+        exp_diff.mean = [];
+        exp_diff.sd = [];
+        for b = 1:size(dataset(d).exponent_polyfit, 2)
+            % extract differences at each trial
+            diff_trial = [];
+            for a = 1:size(dataset(d).exponent_polyfit, 1)
+                diff_trial(a) = dataset(d).exponent_robust(a, b, f) - dataset(d).exponent_polyfit(a, b, f);
+            end
+
+            % calculate mean and SD
+            exp_diff.mean(b) = mean(diff_trial);
+            exp_diff.sd(b) = std(diff_trial);
+        end    
+
+        % plot
+        subplot(1, 3, f)
+        bar(exp_diff.mean);
+        hold on;
+        errorbar(1:length(exp_diff.mean), exp_diff.mean, exp_diff.sd, 'k.', 'LineWidth', 0.8);
+        set(gca, 'XTick', 1:length(exp_diff.mean));
+        set(gca, 'XTickLabel', params.labels);
+        xlabel('electrodes');
+        ylabel('mean robust - polyfit');
+        title(sprintf('%s frequencies ([%d %d]Hz)', dataset(d).foi(f).label, ...
+            dataset(d).foi(f).limits(1), dataset(d).foi(f).limits(2)));
+    end
+
+    % save figure and update counter
+    saveas(gcf, sprintf('%s\\figures\\exp_diff_%s_%s.png', folder.output, dataset(d).ID, dataset(d).area))
+    figure_counter = figure_counter + 1;
+end
+AperiodicPFC_APC = dataset;
+save(output_file, 'AperiodicPFC_APC', '-append');
+
+% extract aperiodic exponents and slopes from target electrodes
+save(output_file, 'AperiodicPFC_measures', '-append');
 
 % clean and continue
-clear 
+clear a b c d f i s header data labels_flipped electrode_n label_new labels_dict row_counter ...
+    row_counter dataset freq_idx roi fit exp_diff diff_trial screen_size flipped 
 fprintf('section finished.\n\n')
 
 %% sensor-based analysis: visualization 
