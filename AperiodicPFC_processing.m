@@ -7,9 +7,8 @@ cd(folder.output)
 
 % input & output 
 study = 'AperiodicPFC';
-input_file = sprintf('%s\\NLEP_output.mat', folder.input);
+input_file = sprintf('%s\\NLEP_output.mat', folder.output);
 output_file = sprintf('%s\\%s_output.mat', folder.output, study);
-load(input_file, 'NLEP_info', 'NLEP_data', 'NLEP_data_1to35', 'NLEP_measures')
 
 % dataset
 params.subjects = 45;
@@ -21,110 +20,17 @@ params.LEP_comps = {'N1' 'N2' 'P2'};
 % graphics
 figure_counter = 1;
 
-%% final data check
-% check for extra/missing events --> generate .txt report
-name = sprintf('%s\\NLEP_event_analysis.txt', folder.output);
-fileID = fopen(name, 'a');
-data = NLEP_data;
-for a = 1:length(data.LEP)
-    if ~isempty(data.LEP(a).ID)
-        fprintf(fileID, sprintf('subject %d (%s) - LEP\r\n', a, data.LEP(a).ID));
-        % unfiltered LEP data
-        for b = fieldnames(data.LEP(a).unfiltered)'
-            for c = {'cond1' 'cond2'}
-                if size(data.LEP(a).unfiltered.(b{1}).(c{1}), 1) > 60
-                    fprintf(fileID, sprintf('     --> unfiltered %s %s: - too many events - %d\r\n', ...
-                        b{1}, c{1}, size(data.LEP(a).unfiltered.(b{1}).(c{1}), 1)));
-                elseif size(data.LEP(a).unfiltered.(b{1}).(c{1}), 1) < 60
-                    fprintf(fileID, sprintf('     --> unfiltered %s %s: - missing events - %d\r\n', ...
-                        b{1}, c{1}, size(data.LEP(a).unfiltered.(b{1}).(c{1}), 1)));
-                end
-            end
-        end
-        % CWT-filtered LEP data
-        for b = fieldnames(data.LEP(a).CWT_filtered)'
-            for c = {'cond1' 'cond2'}
-                if size(data.LEP(a).CWT_filtered.(b{1}).(c{1}), 1) > 60
-                    fprintf(fileID, sprintf('     --> CWT_filtered %s %s: - too many events - %d\r\n', ...
-                        b{1}, c{1}, size(data.LEP(a).CWT_filtered.(b{1}).(c{1}), 1)));
-                elseif size(data.LEP(a).CWT_filtered.(b{1}).(c{1}), 1) < 60
-                    fprintf(fileID, sprintf('     --> CWT_filtered %s %s: - missing events - %d\r\n', ...
-                        b{1}, c{1}, size(data.LEP(a).CWT_filtered.(b{1}).(c{1}), 1)));
-                end
-            end
-        end
-        fprintf(fileID, sprintf('subject %d (%s) - RSEEG\r\n', a, data.LEP(a).ID));
-        % PSD data
-        for c = 1:length(data.RSEEG(a).PSD_st)
-            if contains(data.RSEEG(a).dataset{c}, 'RS')
-                if size(data.RSEEG(a).PSD_st(c).original, 1) > 59
-                    fprintf(fileID, sprintf('     --> %s: - too many events - %d\r\n', ...
-                        data.RSEEG(a).dataset{c}, size(data.RSEEG(a).PSD_st(c).original, 1)));
-                elseif size(data.RSEEG(a).PSD_st(c).original, 1) < 59
-                    fprintf(fileID, sprintf('     --> %s: - missing events - %d\r\n', ...
-                        data.RSEEG(a).dataset{c}, size(data.RSEEG(a).PSD_st(c).original, 1)));
-                end
-            elseif contains(data.RSEEG(a).dataset{c}, 'LEP')
-                if size(data.RSEEG(a).PSD_st(c).original, 1) > 30
-                    fprintf(fileID, sprintf('     --> %s: - too many events - %d\r\n', ...
-                        data.RSEEG(a).dataset{c}, size(data.RSEEG(a).PSD_st(c).original, 1)));
-                elseif size(data.RSEEG(a).PSD_st(c).original, 1) < 30
-                    fprintf(fileID, sprintf('     --> %s: - missing events - %d\r\n', ...
-                        data.RSEEG(a).dataset{c}, size(data.RSEEG(a).PSD_st(c).original, 1)));
-                end
-            end
-        end
-        fprintf(fileID, '\r\n');
-    end
-end
-fclose(fileID);
-
-% remove specific events from specific datasets
-a = 18; 
-dataset = 'cond1';
-% dataset = {'LEP hand left b2 - ready'};
-trial = 31;
-% if RSEEG
-for d = 1:length(dataset)
-    c = find(strcmp(NLEP_data_1to35.RSEEG(a).dataset, dataset{d}));
-    for b = fieldnames(NLEP_data_1to35.RSEEG(a).PSD_st)'
-        NLEP_data_1to35.RSEEG(a).PSD_st(c).(b{1})(trial, :, :) = [];
-    end
-end
-% if LEP
-for b = {'unfiltered' 'CWT_filtered'}   
-    for c = fieldnames(NLEP_data_1to35.LEP(a).(b{1}))'
-        NLEP_data_1to35.LEP(a).(b{1}).(c{1}).(dataset)(trial, :) = [];
-    end
-end
-NLEP_data_1to35.LEP(a).blocks{str2double(regexp(dataset, '\d+', 'match', 'once'))}(trial) = [];
-save(input_file, 'NLEP_info', 'NLEP_data_1to35', '-append')
-
-% remove specific measures
-s = 17; 
-c = 1;
-trial = 32;
-for a = fieldnames(NLEP_measures(s).LEP_ST)'
-    if ~strcmp(a{1}, 'conditions') 
-        for b = 1:3
-            NLEP_measures(s).LEP_ST.(a{1})(b, c, trial) = 0;
-            idx = NLEP_measures(s).LEP_ST.(a{1})(b, c, :) ~= 0;
-            data = NLEP_measures(s).LEP_ST.(a{1})(b, c, idx);
-            data(1, 1, end+1:60) = 0;
-            NLEP_measures(s).LEP_ST.(a{1})(b, c, :) = data;
-        end
-    end
-end
-save(input_file, 'NLEP_measures', '-append')
-
-% check data in letswave
-addpath(genpath([folder.toolbox '\letswave 7']));
-letswave
-
 %% import existing measures and pre-processed data
 % ----- section input -----
 params.prestim_time = 'ready';
+params.prefix = {'icfilt ica_all RS' 'ep reref ds notch bandpass dc'};
 % -------------------------
+% load NLEP output & AperiodicPFC output, if it already existis
+load(input_file, 'NLEP_info', 'NLEP_data', 'NLEP_data_1to35', 'NLEP_measures')
+if exist(output_file) == 2
+    load(output_file, 'AperiodicPFC_data', 'AperiodicPFC_measures')
+end
+
 % extract LEP measures and pain ratings
 for s = 1:params.subjects
     % subject info
@@ -256,6 +162,7 @@ for s = 1:params.subjects
         end
     end
 end
+fprintf('done.\n')
 save(output_file, 'AperiodicPFC_measures', '-append');
 
 % prepare PSD data for sensor-based analysis
@@ -305,21 +212,141 @@ for s = 1:params.subjects
         end
     end
 end
+fprintf('done.\n')
 save(output_file, 'AperiodicPFC_data', '-append');
 
 % prepare pre-processed data for source-based analysis
+for s = 1:params.subjects
+    for c = 1:2
+        % identify and load datasets
+        files2load = dir(sprintf('%s\\NLEP_%s\\%s %s %s %s LEP %s %s*', folder.input, AperiodicPFC_data(s).ID, params.prefix{1}, ...
+            params.prestim_time, params.prefix{2}, AperiodicPFC_data(s).ID, AperiodicPFC_data(s).conditions(c).area, AperiodicPFC_data(s).conditions(c).side));
+        files_idx = false(1, length(files2load));
+        for f = 1:length(files2load)
+            % identify block
+            block = regexp(files2load(f).name, ' b(\d+)', 'tokens', 'once');
+            block = str2num(block{1});
+
+            % load the header
+            if contains(files2load(f).name, '.lw6')
+                load(sprintf('%s\\%s', files2load(f).folder, files2load(f).name), '-mat')
+                dataset(block).header = header;
+            end 
+
+            % load the data
+            if contains(files2load(f).name, '.mat')
+                load(sprintf('%s\\%s', files2load(f).folder, files2load(f).name))
+                dataset(block).data = data;
+            end            
+        end
+
+        % save recording parameters
+        AperiodicPFC_data(s).EEG_ready(c).condition = c;
+        AperiodicPFC_data(s).EEG_ready(c).SR = 1 / dataset(1).header.xstep;
+        AperiodicPFC_data(s).EEG_ready(c).times = -1:dataset(1).header.xstep:-dataset(1).header.xstep;
+
+        % check if number of trials match, append
+        data = cat(1, squeeze(dataset(1).data), squeeze(dataset(2).data));
+        if size(data, 1) == AperiodicPFC_measures(s).pain(c).trials
+            AperiodicPFC_data(s).EEG_ready(c).trials = size(data, 1);
+            AperiodicPFC_data(s).EEG_ready(c).data = data;
+
+        else
+            % first check if the missing trials can be explained by removed
+            % epochs, if not, provide missing trials manually
+            fprintf('subject %d - %s %s: wrong number of events found (%d)\n', s, AperiodicPFC_data(s).conditions(c).area, ...
+                AperiodicPFC_data(s).conditions(c).side, size(data, 1))
+            removed = {};
+            for b = 1:length(NLEP_info.single_subject(s).preprocessing.ERP(5).params)
+                if contains(NLEP_info.single_subject(s).preprocessing.ERP(5).params(b).dataset, ...
+                        sprintf('LEP %s %s', AperiodicPFC_measures(s).conditions(c).area, AperiodicPFC_measures(s).conditions(c).side))
+                    block = str2double(regexp(NLEP_info.single_subject(s).preprocessing.ERP(5).params(b).dataset, '\d+', 'match', 'once'));
+                    if ~isempty(NLEP_info.single_subject(s).preprocessing.ERP(5).params(b).discarded)                        
+                        removed{block} = NLEP_info.single_subject(s).preprocessing.ERP(5).params(b).discarded;
+                    else
+                       removed{block} = []; 
+                    end
+                end
+            end
+            if ~isempty(removed)
+                % identify indexes of removed trials
+                removed_idx = [removed{1}, removed{2} + 30];
+
+                % filter data if trial numbers match
+                if size(data, 1) == 60 - length(removed_idx)
+                    data(removed_idx, :, :) = [];
+                    AperiodicPFC_data(s).EEG_ready(c).trials = size(data, 1);
+                    AperiodicPFC_data(s).EEG_ready(c).data = data;               
+                    continue
+
+                else                 
+                    % ask for manual input
+                    fprintf('EEG trials do not match LEP trials. Please enter missing trials manually.\n')
+                    prompt = {'b1:', 'b2:'};
+                    dlgtitle = sprintf('subject %d - %s %s', s, AperiodicPFC_data(s).conditions(c).area, ...
+                        AperiodicPFC_data(s).conditions(c).side);
+                    dims = [1 50];
+                    definput = {'' ''};
+                    input = inputdlg(prompt,dlgtitle,dims,definput);
+
+                end
+            else
+                % ask for manual input
+                fprintf('EEG trials do not match LEP trials. Please enter missing trials manually.\n')
+                prompt = {'b1:', 'b2:'};
+                dlgtitle = sprintf('subject %d - %s %s', s, AperiodicPFC_data(s).conditions(c).area, ...
+                    AperiodicPFC_data(s).conditions(c).side);
+                dims = [1 50];
+                definput = {'' ''};
+                input = inputdlg(prompt,dlgtitle,dims,definput);
+            end
+
+            % filter ratings according to manually input trial info
+            removed_idx = [str2num(input{1}), str2num(input{2}) + 30];
+            data(removed_idx, :, :) = [];
+            AperiodicPFC_data(s).EEG_ready(c).trials = size(data, 1);
+            AperiodicPFC_data(s).EEG_ready(c).data = data;           
+        end
+    end
+end
+fprintf('done.\n')
+save(output_file, 'AperiodicPFC_data', '-append');
 
 % clean and continue
-clear a b c s condition missing idx ratings removed removed_idx prompt dlgtitle dims definput input ...
-    block data psd trials ...
+clear a b c f s condition missing idx ratings removed removed_idx prompt dlgtitle dims definput input ...
+    block data psd trials files2load files_idx data header dataset ...
     NLEP_data_1to35 NLEP_data NLEP_info NLEP_measures
-sprintf('section finished.')
+fprintf('section finished.\n\n')
 
 %% sensor-based analysis: extract aperiodic exponent
+% ----- section input -----
+% -------------------------
+
+
+
+% clean and continue
+clear 
+fprintf('section finished.\n\n')
 
 %% sensor-based analysis: visualization 
+% ----- section input -----
+% -------------------------
+
+
+
+% clean and continue
+clear 
+fprintf('section finished.\n\n')
 
 %% sensor-based analysis: export for R
+% ----- section input -----
+% -------------------------
+
+
+
+% clean and continue
+clear 
+fprintf('section finished.\n\n')
 
 
 %%

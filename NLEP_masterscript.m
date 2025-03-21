@@ -3381,6 +3381,106 @@ mean(LEP_stats.hand_hand.N2.latency.SD)
 clear param eoi x_start x_end x a b c t p conditios statement data visual_data visual_CI_upper visual_CI_lower...
     visual_sem colours idx_contrast contrast condition n_subjects n labels fig data_amplitude data_latency s 
 
+%% final data check 
+% check for extra/missing events --> generate .txt report
+name = sprintf('%s\\NLEP_event_analysis.txt', folder.output);
+fileID = fopen(name, 'a');
+data = NLEP_data;
+for a = 1:length(data.LEP)
+    if ~isempty(data.LEP(a).ID)
+        fprintf(fileID, sprintf('subject %d (%s) - LEP\r\n', a, data.LEP(a).ID));
+        % unfiltered LEP data
+        for b = fieldnames(data.LEP(a).unfiltered)'
+            for c = {'cond1' 'cond2'}
+                if size(data.LEP(a).unfiltered.(b{1}).(c{1}), 1) > 60
+                    fprintf(fileID, sprintf('     --> unfiltered %s %s: - too many events - %d\r\n', ...
+                        b{1}, c{1}, size(data.LEP(a).unfiltered.(b{1}).(c{1}), 1)));
+                elseif size(data.LEP(a).unfiltered.(b{1}).(c{1}), 1) < 60
+                    fprintf(fileID, sprintf('     --> unfiltered %s %s: - missing events - %d\r\n', ...
+                        b{1}, c{1}, size(data.LEP(a).unfiltered.(b{1}).(c{1}), 1)));
+                end
+            end
+        end
+        % CWT-filtered LEP data
+        for b = fieldnames(data.LEP(a).CWT_filtered)'
+            for c = {'cond1' 'cond2'}
+                if size(data.LEP(a).CWT_filtered.(b{1}).(c{1}), 1) > 60
+                    fprintf(fileID, sprintf('     --> CWT_filtered %s %s: - too many events - %d\r\n', ...
+                        b{1}, c{1}, size(data.LEP(a).CWT_filtered.(b{1}).(c{1}), 1)));
+                elseif size(data.LEP(a).CWT_filtered.(b{1}).(c{1}), 1) < 60
+                    fprintf(fileID, sprintf('     --> CWT_filtered %s %s: - missing events - %d\r\n', ...
+                        b{1}, c{1}, size(data.LEP(a).CWT_filtered.(b{1}).(c{1}), 1)));
+                end
+            end
+        end
+        fprintf(fileID, sprintf('subject %d (%s) - RSEEG\r\n', a, data.LEP(a).ID));
+        % PSD data
+        for c = 1:length(data.RSEEG(a).PSD_st)
+            if contains(data.RSEEG(a).dataset{c}, 'RS')
+                if size(data.RSEEG(a).PSD_st(c).original, 1) > 59
+                    fprintf(fileID, sprintf('     --> %s: - too many events - %d\r\n', ...
+                        data.RSEEG(a).dataset{c}, size(data.RSEEG(a).PSD_st(c).original, 1)));
+                elseif size(data.RSEEG(a).PSD_st(c).original, 1) < 59
+                    fprintf(fileID, sprintf('     --> %s: - missing events - %d\r\n', ...
+                        data.RSEEG(a).dataset{c}, size(data.RSEEG(a).PSD_st(c).original, 1)));
+                end
+            elseif contains(data.RSEEG(a).dataset{c}, 'LEP')
+                if size(data.RSEEG(a).PSD_st(c).original, 1) > 30
+                    fprintf(fileID, sprintf('     --> %s: - too many events - %d\r\n', ...
+                        data.RSEEG(a).dataset{c}, size(data.RSEEG(a).PSD_st(c).original, 1)));
+                elseif size(data.RSEEG(a).PSD_st(c).original, 1) < 30
+                    fprintf(fileID, sprintf('     --> %s: - missing events - %d\r\n', ...
+                        data.RSEEG(a).dataset{c}, size(data.RSEEG(a).PSD_st(c).original, 1)));
+                end
+            end
+        end
+        fprintf(fileID, '\r\n');
+    end
+end
+fclose(fileID);
+
+% remove specific events from specific datasets
+a = 18; 
+dataset = 'cond1';
+% dataset = {'LEP hand left b2 - ready'};
+trial = 31;
+% if RSEEG
+for d = 1:length(dataset)
+    c = find(strcmp(NLEP_data_1to35.RSEEG(a).dataset, dataset{d}));
+    for b = fieldnames(NLEP_data_1to35.RSEEG(a).PSD_st)'
+        NLEP_data_1to35.RSEEG(a).PSD_st(c).(b{1})(trial, :, :) = [];
+    end
+end
+% if LEP
+for b = {'unfiltered' 'CWT_filtered'}   
+    for c = fieldnames(NLEP_data_1to35.LEP(a).(b{1}))'
+        NLEP_data_1to35.LEP(a).(b{1}).(c{1}).(dataset)(trial, :) = [];
+    end
+end
+NLEP_data_1to35.LEP(a).blocks{str2double(regexp(dataset, '\d+', 'match', 'once'))}(trial) = [];
+save(input_file, 'NLEP_info', 'NLEP_data_1to35', '-append')
+
+% remove specific measures
+s = 17; 
+c = 1;
+trial = 32;
+for a = fieldnames(NLEP_measures(s).LEP_ST)'
+    if ~strcmp(a{1}, 'conditions') 
+        for b = 1:3
+            NLEP_measures(s).LEP_ST.(a{1})(b, c, trial) = 0;
+            idx = NLEP_measures(s).LEP_ST.(a{1})(b, c, :) ~= 0;
+            data = NLEP_measures(s).LEP_ST.(a{1})(b, c, idx);
+            data(1, 1, end+1:60) = 0;
+            NLEP_measures(s).LEP_ST.(a{1})(b, c, :) = data;
+        end
+    end
+end
+save(input_file, 'NLEP_measures', '-append')
+
+% check data in letswave
+addpath(genpath([folder.toolbox '\letswave 7']));
+letswave
+
 %% helper lines
 % update NLEP_info
 NLEP_info_Domi = NLEP_info;
