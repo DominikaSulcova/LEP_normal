@@ -327,6 +327,11 @@ params.foi = {[5, 50] [5 30] [30 50]};
 params.foi_labels = {'broad' 'low' 'high'};
 % -------------------------
 
+% reload output structures if necessary
+if exist('AperiodicPFC_data') ~= 1 || exist('AperiodicPFC_measures') ~= 1
+    load(output_file, 'AperiodicPFC_data', 'AperiodicPFC_measures')
+end
+
 % prepare flip dictionary
 load('dataset_default.lw6', '-mat')
 params.labels = {header.chanlocs.labels};
@@ -467,22 +472,86 @@ end
 AperiodicPFC_APC = dataset;
 save(output_file, 'AperiodicPFC_APC', '-append');
 
-% extract aperiodic exponents and slopes from target electrodes
+% extract aperiodic exponents and slopes from target/ctrl electrodes
+target_idx = find(ismember(params.labels, params.eoi_target));
+ctrl_idx = find(ismember(params.labels, params.eoi_ctrl));
+for d = 1:length(dataset)
+    for a = 1:size(dataset(d).data, 1)
+        % subset data and average across rois
+        data.target = squeeze(mean(dataset(d).data(a, target_idx, :), 2))'; 
+        data.ctrl = squeeze(mean(dataset(d).data(a, ctrl_idx, :), 2))'; 
+
+        % perform robust linear regression in all frequency bands
+        exponent.target = []; offset.target = [];
+        exponent.ctrl = []; offset.ctrl = [];
+        for c = 1:length(params.foi)
+            % identify frequencies
+            freq_idx = dataset(d).freq >= dataset(d).foi(c).limits(1) & dataset(d).freq <= dataset(d).foi(c).limits(2);
+            freq = dataset(d).freq(freq_idx);
+
+            % log-transform
+            roi.psd_target = log10(data.target(freq_idx));
+            roi.psd_ctrl = log10(data.ctrl(freq_idx));
+            roi.freq = log10(freq);
+
+            % fit for target roi
+            [fit, ~] = robustfit(roi.freq, roi.psd_target);
+            exponent.target(c) = -fit(2);
+            offset.target(c) = fit(1);
+
+            % fit for ctrl roi
+            [fit, ~] = robustfit(roi.freq, roi.psd_ctrl);
+            exponent.ctrl(c) = -fit(2);
+            offset.ctrl(c) = fit(1);           
+        end
+
+        % save to output structure
+        dataset(d).exponent_target(a, :) = exponent.target;
+        dataset(d).exponent_ctrl(a, :) = exponent.ctrl;
+        dataset(d).offset_target(a, :) = offset.target;
+        dataset(d).offset_ctrl(a, :) = offset.ctrl;
+    end
+end
+AperiodicPFC_APC = dataset;
+save(output_file, 'AperiodicPFC_APC', '-append');
+
+% save to measures structure as well
+for d = 1:length(dataset)
+    % identify subject and condition
+    s = dataset(d).subject;
+    area = dataset(d).area;
+    if dataset(d).flipped
+        side = 'left';
+    else
+        side = 'right';
+    end
+    for a = 1:length(AperiodicPFC_measures(s).conditions)
+        if strcmp(AperiodicPFC_measures(s).conditions(a).area, area) && ...
+             strcmp(AperiodicPFC_measures(s).conditions(a).side, side)  
+            c = AperiodicPFC_measures(s).conditions(a).condition;
+        end
+    end
+
+    % encode
+    AperiodicPFC_measures(s).APC(c).condition = c;
+    AperiodicPFC_measures(s).APC(c).flipped = dataset(d).flipped;
+    AperiodicPFC_measures(s).APC(c).foi = dataset(d).foi;
+    AperiodicPFC_measures(s).APC(c).exponent_target = dataset(d).exponent_target;
+    AperiodicPFC_measures(s).APC(c).exponent_ctrl = dataset(d).exponent_ctrl;
+    AperiodicPFC_measures(s).APC(c).offset_target = dataset(d).offset_target;
+    AperiodicPFC_measures(s).APC(c).offset_ctrl = dataset(d).offset_ctrl;
+    AperiodicPFC_measures(s).APC(c).trials = size(dataset(d).exponent_target, 1);
+
+    % throw error if trial numbers don't match
+    if AperiodicPFC_measures(s).APC(c).trials ~= AperiodicPFC_measures(s).LEP(c).trials  
+        error('ERROR: subject %d, condition %d - trial numbers do not match!', s, c)
+    end
+end
 save(output_file, 'AperiodicPFC_measures', '-append');
 
 % clean and continue
-clear a b c d f i s header data labels_flipped electrode_n label_new labels_dict row_counter ...
-    row_counter dataset freq_idx roi fit exp_diff diff_trial screen_size flipped 
-fprintf('section finished.\n\n')
-
-%% sensor-based analysis: visualization 
-% ----- section input -----
-% -------------------------
-
-
-
-% clean and continue
-clear 
+clear a b c d f i s header data labels_flipped electrode_n label_new labels_dict row_counter side area ...
+    row_counter dataset freq_idx roi fit exp_diff diff_trial screen_size flipped freq exponent offset ctrl_idx target_idx
 fprintf('section finished.\n\n')
 
 %% sensor-based analysis: export for R
@@ -495,6 +564,15 @@ fprintf('section finished.\n\n')
 clear 
 fprintf('section finished.\n\n')
 
+%% sensor-based analysis: visualization 
+% ----- section input -----
+% -------------------------
+
+
+
+% clean and continue
+clear 
+fprintf('section finished.\n\n')
 
 %%
 % ----- section input -----
