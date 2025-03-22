@@ -20,7 +20,7 @@ params.LEP_comps = {'N1' 'N2' 'P2'};
 % graphics
 figure_counter = 1;
 
-%% import existing measures and pre-processed data
+%% sensor-based analysis: import existing measures and pre-processed data
 % ----- section input -----
 params.prestim_time = 'ready';
 params.prefix = {'icfilt ica_all RS' 'ep reref ds notch bandpass dc'};
@@ -210,103 +210,6 @@ for s = 1:params.subjects
         else
             error('ERROR: sibject %d - %s %s - the reial numbers do not match!', ...
                 s, AperiodicPFC_data(s).conditions(c).area, AperiodicPFC_data(s).conditions(c).side)
-        end
-    end
-end
-fprintf('done.\n')
-save(output_file, 'AperiodicPFC_data', '-append');
-
-% prepare pre-processed data for source-based analysis
-for s = 1:params.subjects
-    for c = 1:2
-        % identify and load datasets
-        files2load = dir(sprintf('%s\\NLEP_%s\\%s %s %s %s LEP %s %s*', folder.input, AperiodicPFC_data(s).ID, params.prefix{1}, ...
-            params.prestim_time, params.prefix{2}, AperiodicPFC_data(s).ID, AperiodicPFC_data(s).conditions(c).area, AperiodicPFC_data(s).conditions(c).side));
-        files_idx = false(1, length(files2load));
-        for f = 1:length(files2load)
-            % identify block
-            block = regexp(files2load(f).name, ' b(\d+)', 'tokens', 'once');
-            block = str2num(block{1});
-
-            % load the header
-            if contains(files2load(f).name, '.lw6')
-                load(sprintf('%s\\%s', files2load(f).folder, files2load(f).name), '-mat')
-                dataset(block).header = header;
-            end 
-
-            % load the data
-            if contains(files2load(f).name, '.mat')
-                load(sprintf('%s\\%s', files2load(f).folder, files2load(f).name))
-                dataset(block).data = data;
-            end            
-        end
-
-        % save recording parameters
-        AperiodicPFC_data(s).EEG_ready(c).condition = c;
-        AperiodicPFC_data(s).EEG_ready(c).SR = 1 / dataset(1).header.xstep;
-        AperiodicPFC_data(s).EEG_ready(c).times = -1:dataset(1).header.xstep:-dataset(1).header.xstep;
-
-        % check if number of trials match, append
-        data = cat(1, squeeze(dataset(1).data), squeeze(dataset(2).data));
-        if size(data, 1) == AperiodicPFC_measures(s).pain(c).trials
-            AperiodicPFC_data(s).EEG_ready(c).trials = size(data, 1);
-            AperiodicPFC_data(s).EEG_ready(c).data = data;
-
-        else
-            % first check if the missing trials can be explained by removed
-            % epochs, if not, provide missing trials manually
-            fprintf('subject %d - %s %s: wrong number of events found (%d)\n', s, AperiodicPFC_data(s).conditions(c).area, ...
-                AperiodicPFC_data(s).conditions(c).side, size(data, 1))
-            removed = {};
-            for b = 1:length(NLEP_info.single_subject(s).preprocessing.ERP(5).params)
-                if contains(NLEP_info.single_subject(s).preprocessing.ERP(5).params(b).dataset, ...
-                        sprintf('LEP %s %s', AperiodicPFC_measures(s).conditions(c).area, AperiodicPFC_measures(s).conditions(c).side))
-                    block = str2double(regexp(NLEP_info.single_subject(s).preprocessing.ERP(5).params(b).dataset, '\d+', 'match', 'once'));
-                    if ~isempty(NLEP_info.single_subject(s).preprocessing.ERP(5).params(b).discarded)                        
-                        removed{block} = NLEP_info.single_subject(s).preprocessing.ERP(5).params(b).discarded;
-                    else
-                       removed{block} = []; 
-                    end
-                end
-            end
-            if ~isempty(removed)
-                % identify indexes of removed trials
-                removed_idx = [removed{1}, removed{2} + 30];
-
-                % filter data if trial numbers match
-                if size(data, 1) == 60 - length(removed_idx)
-                    data(removed_idx, :, :) = [];
-                    AperiodicPFC_data(s).EEG_ready(c).trials = size(data, 1);
-                    AperiodicPFC_data(s).EEG_ready(c).data = data;               
-                    continue
-
-                else                 
-                    % ask for manual input
-                    fprintf('EEG trials do not match LEP trials. Please enter missing trials manually.\n')
-                    prompt = {'b1:', 'b2:'};
-                    dlgtitle = sprintf('subject %d - %s %s', s, AperiodicPFC_data(s).conditions(c).area, ...
-                        AperiodicPFC_data(s).conditions(c).side);
-                    dims = [1 50];
-                    definput = {'' ''};
-                    input = inputdlg(prompt,dlgtitle,dims,definput);
-
-                end
-            else
-                % ask for manual input
-                fprintf('EEG trials do not match LEP trials. Please enter missing trials manually.\n')
-                prompt = {'b1:', 'b2:'};
-                dlgtitle = sprintf('subject %d - %s %s', s, AperiodicPFC_data(s).conditions(c).area, ...
-                    AperiodicPFC_data(s).conditions(c).side);
-                dims = [1 50];
-                definput = {'' ''};
-                input = inputdlg(prompt,dlgtitle,dims,definput);
-            end
-
-            % filter ratings according to manually input trial info
-            removed_idx = [str2num(input{1}), str2num(input{2}) + 30];
-            data(removed_idx, :, :) = [];
-            AperiodicPFC_data(s).EEG_ready(c).trials = size(data, 1);
-            AperiodicPFC_data(s).EEG_ready(c).data = data;           
         end
     end
 end
@@ -556,22 +459,207 @@ fprintf('section finished.\n\n')
 
 %% sensor-based analysis: export for R
 % ----- section input -----
+params.foi = {[5, 50] [5 30] [30 50]};
+params.foi_labels = {'broad' 'low' 'high'};
+params.region = {'target' 'ctrl'};
 % -------------------------
 
+% reload output structures if necessary 
+if exist('AperiodicPFC_data') ~= 1 || exist('AperiodicPFC_measures') ~= 1 || exist('AperiodicPFC_APC') ~= 1
+    load(output_file, 'AperiodicPFC_data', 'AperiodicPFC_measures', 'AperiodicPFC_APC')
+end
 
+% export measured variables in a long-format table
+for f = 1:length(params.foi)
+    fprintf('exporting %s frequency data:\n', params.foi_labels{f})
+    table_export = table;
+    row_counter = 1;
+    for s = 1:params.subjects
+        for c = 1:length(AperiodicPFC_measures(s).conditions)
+            for a = 1:AperiodicPFC_measures(s).LEP(c).trials
+                for b = 1:length(params.LEP_comps)
+                    for r = 1:length(params.region)
+                        % subject info
+                        table_export.subject(row_counter) = s;
+                        table_export.ID{row_counter} = AperiodicPFC_measures(s).ID;
+                        table_export.age(row_counter) = AperiodicPFC_measures(s).age;
+                        table_export.male(row_counter) = AperiodicPFC_measures(s).male;
+                        table_export.handedness{row_counter} = AperiodicPFC_measures(s).handedness;
+        
+                        % session info
+                        table_export.condition(row_counter) = c;
+                        table_export.area{row_counter} = AperiodicPFC_measures(s).conditions(c).area;
+                        table_export.side{row_counter} = AperiodicPFC_measures(s).conditions(c).side;
+                        if strcmp(table_export.handedness{row_counter},table_export.side{row_counter})
+                            table_export.dominant(row_counter) = 1;
+                        else
+                            table_export.dominant(row_counter) = 0;
+                        end
+                        table_export.flipped{row_counter} = AperiodicPFC_measures(s).APC(c).flipped;
+    
+                        % dependent variable: LEP measures
+                        table_export.component{row_counter} = params.LEP_comps{b};
+                        table_export.amplitude(row_counter) = AperiodicPFC_measures(s).LEP(c).(params.LEP_comps{b}).amplitude(a);
+                        table_export.latency(row_counter) = AperiodicPFC_measures(s).LEP(c).(params.LEP_comps{b}).latency(a);
+    
+                        % dependent variable: pain rating
+                        table_export.rating(row_counter) = AperiodicPFC_measures(s).pain(c).ratings(a);
+        
+                        % independent variable: aperiodic measures
+                        table_export.foi{row_counter} = AperiodicPFC_measures(s).APC(c).foi(f).label;  
+                        table_export.region{row_counter} = params.region{r}; 
+                        if strcmp(params.region{r}, 'target')
+                            table_export.exponent(row_counter) = AperiodicPFC_measures(s).APC(c).exponent_target(a, f);
+                            table_export.offset(row_counter) = AperiodicPFC_measures(s).APC(c).offset_target(a, f);  
+                        elseif strcmp(params.region{r}, 'ctrl')
+                            table_export.exponent(row_counter) = AperiodicPFC_measures(s).APC(c).exponent_ctrl(a, f);
+                            table_export.offset(row_counter) = AperiodicPFC_measures(s).APC(c).offset_ctrl(a, f); 
+                        end
+        
+                        % update row counter
+                        row_counter = row_counter + 1;
+                    end
+                end
+            end
+        end
+    end
+
+    % save table to output structure and as .csv
+    fprintf('saving...')
+    statement = sprintf('AperiodicPFC_export_%s = table_export;', params.foi_labels{f});
+    eval(statement)
+    statement = sprintf('save(output_file, ''AperiodicPFC_export_%s'', ''-append'');', params.foi_labels{f});
+    eval(statement)
+    statement = sprintf('writetable(AperiodicPFC_export_%s, ''AperiodicPFC_export_%s.csv'');', params.foi_labels{f}, params.foi_labels{f});
+    eval(statement)  
+    fprintf('done.\n')
+end
+
+% clean and continue
+clear a b c f r s row_counter table_export statement
+fprintf('section finished.\n\n')
+
+%% sensor-based analysis: visualization 
+% ----- section input -----
+params.plot_foi = 'high';
+params.region = {'target' 'ctrl'};
+% -------------------------
+% grand average LEPs
+%   - import LEP data
+%   - C3 and C4 together --> flip?
+%   - plot a figure with hand and foot together
+% topographical distribution of aperiodic exponent 
 
 % clean and continue
 clear 
 fprintf('section finished.\n\n')
 
-%% sensor-based analysis: visualization 
+%% source-based analysis: import pre-processed data
 % ----- section input -----
+params.prestim_time = 'ready';
+params.prefix = {'icfilt ica_all RS' 'ep reref ds notch bandpass dc'};
 % -------------------------
 
+% import pre-processed pre-stimulus data 
+for s = 1:params.subjects
+    for c = 1:2
+        % identify and load datasets
+        files2load = dir(sprintf('%s\\NLEP_%s\\%s %s %s %s LEP %s %s*', folder.input, AperiodicPFC_data(s).ID, params.prefix{1}, ...
+            params.prestim_time, params.prefix{2}, AperiodicPFC_data(s).ID, AperiodicPFC_data(s).conditions(c).area, AperiodicPFC_data(s).conditions(c).side));
+        files_idx = false(1, length(files2load));
+        for f = 1:length(files2load)
+            % identify block
+            block = regexp(files2load(f).name, ' b(\d+)', 'tokens', 'once');
+            block = str2num(block{1});
 
+            % load the header
+            if contains(files2load(f).name, '.lw6')
+                load(sprintf('%s\\%s', files2load(f).folder, files2load(f).name), '-mat')
+                dataset(block).header = header;
+            end 
+
+            % load the data
+            if contains(files2load(f).name, '.mat')
+                load(sprintf('%s\\%s', files2load(f).folder, files2load(f).name))
+                dataset(block).data = data;
+            end            
+        end
+
+        % save recording parameters
+        AperiodicPFC_data(s).EEG_ready(c).condition = c;
+        AperiodicPFC_data(s).EEG_ready(c).SR = 1 / dataset(1).header.xstep;
+        AperiodicPFC_data(s).EEG_ready(c).times = -1:dataset(1).header.xstep:-dataset(1).header.xstep;
+
+        % check if number of trials match, append
+        data = cat(1, squeeze(dataset(1).data), squeeze(dataset(2).data));
+        if size(data, 1) == AperiodicPFC_measures(s).pain(c).trials
+            AperiodicPFC_data(s).EEG_ready(c).trials = size(data, 1);
+            AperiodicPFC_data(s).EEG_ready(c).data = data;
+
+        else
+            % first check if the missing trials can be explained by removed
+            % epochs, if not, provide missing trials manually
+            fprintf('subject %d - %s %s: wrong number of events found (%d)\n', s, AperiodicPFC_data(s).conditions(c).area, ...
+                AperiodicPFC_data(s).conditions(c).side, size(data, 1))
+            removed = {};
+            for b = 1:length(NLEP_info.single_subject(s).preprocessing.ERP(5).params)
+                if contains(NLEP_info.single_subject(s).preprocessing.ERP(5).params(b).dataset, ...
+                        sprintf('LEP %s %s', AperiodicPFC_measures(s).conditions(c).area, AperiodicPFC_measures(s).conditions(c).side))
+                    block = str2double(regexp(NLEP_info.single_subject(s).preprocessing.ERP(5).params(b).dataset, '\d+', 'match', 'once'));
+                    if ~isempty(NLEP_info.single_subject(s).preprocessing.ERP(5).params(b).discarded)                        
+                        removed{block} = NLEP_info.single_subject(s).preprocessing.ERP(5).params(b).discarded;
+                    else
+                       removed{block} = []; 
+                    end
+                end
+            end
+            if ~isempty(removed)
+                % identify indexes of removed trials
+                removed_idx = [removed{1}, removed{2} + 30];
+
+                % filter data if trial numbers match
+                if size(data, 1) == 60 - length(removed_idx)
+                    data(removed_idx, :, :) = [];
+                    AperiodicPFC_data(s).EEG_ready(c).trials = size(data, 1);
+                    AperiodicPFC_data(s).EEG_ready(c).data = data;               
+                    continue
+
+                else                 
+                    % ask for manual input
+                    fprintf('EEG trials do not match LEP trials. Please enter missing trials manually.\n')
+                    prompt = {'b1:', 'b2:'};
+                    dlgtitle = sprintf('subject %d - %s %s', s, AperiodicPFC_data(s).conditions(c).area, ...
+                        AperiodicPFC_data(s).conditions(c).side);
+                    dims = [1 50];
+                    definput = {'' ''};
+                    input = inputdlg(prompt,dlgtitle,dims,definput);
+
+                end
+            else
+                % ask for manual input
+                fprintf('EEG trials do not match LEP trials. Please enter missing trials manually.\n')
+                prompt = {'b1:', 'b2:'};
+                dlgtitle = sprintf('subject %d - %s %s', s, AperiodicPFC_data(s).conditions(c).area, ...
+                    AperiodicPFC_data(s).conditions(c).side);
+                dims = [1 50];
+                definput = {'' ''};
+                input = inputdlg(prompt,dlgtitle,dims,definput);
+            end
+
+            % filter ratings according to manually input trial info
+            removed_idx = [str2num(input{1}), str2num(input{2}) + 30];
+            data(removed_idx, :, :) = [];
+            AperiodicPFC_data(s).EEG_ready(c).trials = size(data, 1);
+            AperiodicPFC_data(s).EEG_ready(c).data = data;           
+        end
+    end
+end
+fprintf('done.\n')
+save(output_file, 'AperiodicPFC_data', '-append');
 
 % clean and continue
-clear 
+clear c f s block files2load files_idx data header dataset ...
+    removed removed_idx prompt dlgtitle dims definput input
 fprintf('section finished.\n\n')
 
 %%
