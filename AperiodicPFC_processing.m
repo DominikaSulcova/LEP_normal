@@ -2,6 +2,7 @@
 % directories
 folder.toolbox = uigetdir(pwd, 'Choose the toolbox folder');        % letswave masterfiles
 folder.input = uigetdir(pwd, 'Coose the input folder');             % raw data
+folder.data = uigetdir(pwd, 'Coose the data folder');               % processed data
 folder.output = uigetdir(pwd, 'Choose the OneDrive folder');        % output folder --> figures, loutput file, exports 
 cd(folder.output)
 
@@ -20,7 +21,7 @@ params.LEP_comps = {'N1' 'N2' 'P2'};
 % graphics
 figure_counter = 1;
 
-%% sensor-based analysis: import existing measures and pre-processed data
+%% sensor-space analysis: import existing measures and pre-processed data
 % ----- section input -----
 params.prestim_time = 'ready';
 params.prefix = {'icfilt ica_all RS' 'ep reref ds notch bandpass dc'};
@@ -222,7 +223,7 @@ clear a b c f s condition missing idx ratings removed removed_idx prompt dlgtitl
     NLEP_data_1to35 NLEP_data NLEP_info NLEP_measures
 fprintf('section finished.\n\n')
 
-%% sensor-based analysis: extract aperiodic exponent
+%% sensor-space analysis: extract aperiodic exponent
 % ----- section input -----
 params.eoi_target = {'AF3' 'AFz' 'AF4' 'F3' 'F1' 'F2' 'F4'};
 params.eoi_ctrl = {'PO3' 'POz' 'PO4' 'P3' 'P1' 'P2' 'P4'};
@@ -457,7 +458,7 @@ clear a b c d f i s header data labels_flipped electrode_n label_new labels_dict
     row_counter dataset freq_idx roi fit exp_diff diff_trial screen_size flipped freq exponent offset ctrl_idx target_idx
 fprintf('section finished.\n\n')
 
-%% sensor-based analysis: export for R
+%% sensor-space analysis: export for R
 % ----- section input -----
 params.foi = {[5, 50] [5 30] [30 50]};
 params.foi_labels = {'broad' 'low' 'high'};
@@ -539,7 +540,7 @@ end
 clear a b c f r s row_counter table_export statement
 fprintf('section finished.\n\n')
 
-%% sensor-based analysis: visualization 
+%% sensor-space analysis: visualization 
 % ----- section input -----
 params.plot_foi = 'high';
 params.region = {'target' 'ctrl'};
@@ -554,13 +555,14 @@ params.region = {'target' 'ctrl'};
 clear 
 fprintf('section finished.\n\n')
 
-%% source-based analysis: import pre-processed data
+%% source-space analysis: import pre-processed data
 % ----- section input -----
 params.prestim_time = 'ready';
 params.prefix = {'icfilt ica_all RS' 'ep reref ds notch bandpass dc'};
 % -------------------------
 
 % import pre-processed pre-stimulus data 
+fprintf('loading data:\n')
 for s = 1:params.subjects
     for c = 1:2
         % identify and load datasets
@@ -655,237 +657,311 @@ for s = 1:params.subjects
     end
 end
 fprintf('done.\n')
+clear dataset
 save(output_file, 'AperiodicPFC_data', '-append');
 
+% prepare flip dictionary
+load(sprintf('%s\\dataset_default.lw6', folder.output), '-mat')
+params.labels = {header.chanlocs.labels};
+params.chanlocs = header.chanlocs;
+labels_flipped = params.labels;
+for i = 1:length(params.labels)
+    electrode_n = str2num(params.labels{i}(end));
+    if isempty(electrode_n)
+    else
+        if electrode_n == 0
+            label_new = params.labels{i}(1:end-2);
+            label_new = [label_new num2str(9)];
+        elseif mod(electrode_n,2) == 1              % odd number --> left hemisphere                    
+            label_new = params.labels{i}(1:end-1);
+            label_new = [label_new num2str(electrode_n + 1)];
+        else                                    % even number --> right hemisphere 
+            label_new = params.labels{i}(1:end-1);
+            label_new = [label_new num2str(electrode_n - 1)];
+        end
+        a = find(strcmpi(params.labels, label_new));
+        if isempty(a)
+        else
+            labels_flipped{i} = label_new;
+        end
+    end
+end
+labels_dict = cat(1, params.labels, labels_flipped)';
+
+% homogenize the data --> flip as if all stimuli were delivered to the right hand 
+addpath(genpath([folder.toolbox '\letswave 6']));
+row_counter = 1;
+fprintf('flipping data: ')
+for s = 1:params.subjects
+    fprintf('. ')
+    for c = 1:2
+        % select the data
+        data = []; 
+        data(:, :, 1, 1, 1, :) = AperiodicPFC_data(s).EEG_ready(c).data;  
+
+        % flip if left side stimulated
+        flipped = false;
+        if strcmp(AperiodicPFC_data(s).conditions(c).side, 'left')
+           [header, data, ~] = RLW_flip_electrodes(header, data, labels_dict);
+           flipped = true;
+        end
+
+        % save to the new dataset
+        dataset(row_counter).subject = s;
+        dataset(row_counter).ID = AperiodicPFC_data(s).ID;
+        dataset(row_counter).condition = c;
+        dataset(row_counter).area = AperiodicPFC_data(s).conditions(c).area;
+        dataset(row_counter).side = AperiodicPFC_data(s).conditions(c).side;
+        dataset(row_counter).flipped = flipped;
+        dataset(row_counter).SR = AperiodicPFC_data(s).EEG_ready(c).SR;
+        dataset(row_counter).times = AperiodicPFC_data(s).EEG_ready(c).times;      
+        dataset(row_counter).data = squeeze(data);
+
+        % update row counter
+        row_counter = row_counter + 1;
+    end
+end
+AperiodicPFC_EEG_flipped = dataset;
+save(output_file, 'AperiodicPFC_EEG_flipped', '-append', '-v7.3'); 
+fprintf('done.\n')
+
 % clean and continue
-clear c f s block files2load files_idx data header dataset ...
-    removed removed_idx prompt dlgtitle dims definput input
+clear a c f i s block files2load files_idx data header labels_dict labels_flipped electrode_n ...
+    label_new removed removed_idx prompt dlgtitle dims definput input flipped 
 fprintf('section finished.\n\n')
 
-%%
+%% source-space analysis: estimate source activity
 % ----- section input -----
-param.prefix_data = {'icfilt ica_all chunked' 'icfilt ica_all RS'};
-param.cond_continuous = {'open' 'close'; 'pre' 'post'};
-param.cond_ST = {'relaxed' 'ready'};
-param.head_model = 'BEM';
-% ------------------------- 
+params.method = 'lcmv';
+params.single_trial = true;
+params.path_atlas = 'Schaefer2018_100Parcels_7Networks_order_FSLMNI152_1mm.Centroid_RAS.csv';
+params.path_headmodel = 'standard_bem.mat';
+% -------------------------
 
-% set directories and load info structure
-if ~exist("folder")
-    folder.toolbox = uigetdir(pwd, 'Choose the toolbox folder');        % letswave masterfiles
-    folder.input = uigetdir(pwd, 'Coose the input folder');             % raw data
-    folder.data = uigetdir(pwd, 'Choose the data folder');              % processed data
-    folder.output = uigetdir(pwd, 'Choose the OneDrive folder');        % output folder --> figures, logfiles, output .mat file
-    study = 'NLEP';
-    output_file = sprintf('%s\\%s_output.mat', folder.output, study);
+% load dataset if necessary
+if exist('dataset') ~= 1
+    load(output_file, 'AperiodicPFC_EEG_flipped')
+    dataset = AperiodicPFC_EEG_flipped;
 end
-cd(folder.data)
-load(output_file, 'NLEP_info');
 
-% ask for subject number
-if ~exist('subject_idx')
-    prompt = {'subject number:'};
-    dlgtitle = 'subject';
-    dims = [1 40];
-    definput = {''};
-    input = inputdlg(prompt,dlgtitle,dims,definput);
-    subject_idx = str2num(input{1,1});
-end
-clear prompt dlgtitle dims definput input
-
-% add FieldTrip to the top of search path
+% prepare template-compatible electrode locations
 addpath(genpath([folder.toolbox '\FieldTrip']));
+load(sprintf('%s\\dataset_default.lw6', folder.output), '-mat')
+params.labels = {header.chanlocs.labels};
+params.elec_template = ft_read_sens('standard_1005.elc');
+elec = create_elec(params, header);
 
-% load template electrode positions
-chanlocs_template = ft_read_sens(sprintf('%s\\FieldTrip\\template\\electrode\\standard_1020.elc', folder.toolbox));
-chanlocs_template = ft_determine_coordsys(chanlocs_template, 'interactive', 'yes');
-
-% load template headmodel
-headmodel = ft_read_headmodel(sprintf('%s\\FieldTrip\\template\\headmodel\\standard_bem.mat', folder.toolbox));
-ft_plot_headmodel(headmodel, 'facealpha', 0.6)
-
-% prepare template mri
-mri = ft_read_mri(sprintf('%s\\FieldTrip\\template\\headmodel\\standard_mri.mat', folder.toolbox));
-
-% prepare cortical atlas
-atlas = ft_read_atlas(sprintf('%s\\FieldTrip\\template\\atlas\\aal\\ROI_MNI_V4.nii', folder.toolbox));
-cortical_rois = {'Precentral_L', 'Precentral_R', 'Frontal_Sup_L', 'Frontal_Sup_R', ...
-    'Frontal_Sup_Orb_L', 'Frontal_Sup_Orb_R', 'Frontal_Mid_L', 'Frontal_Mid_R', ...
-    'Frontal_Mid_Orb_L', 'Frontal_Mid_Orb_R', 'Frontal_Inf_Oper_L', 'Frontal_Inf_Oper_R', ...
-    'Frontal_Inf_Tri_L', 'Frontal_Inf_Tri_R', 'Frontal_Inf_Orb_L', 'Frontal_Inf_Orb_R', ...
-    'Rolandic_Oper_L', 'Rolandic_Oper_R', 'Supp_Motor_Area_L', 'Supp_Motor_Area_R', ...
-    'Olfactory_L', 'Olfactory_R', 'Postcentral_L', 'Postcentral_R', 'Parietal_Sup_L', ...
-    'Parietal_Sup_R', 'Parietal_Inf_L', 'Parietal_Inf_R', 'Supramarginal_L', 'Supramarginal_R', ...
-    'Angular_L', 'Angular_R', 'Precuneus_L', 'Precuneus_R', 'Temporal_Sup_L', 'Temporal_Sup_R', ...
-    'Temporal_Pole_Sup_L', 'Temporal_Pole_Sup_R', 'Temporal_Mid_L', 'Temporal_Mid_R', ...
-    'Temporal_Pole_Mid_L', 'Temporal_Pole_Mid_R', 'Temporal_Inf_L', 'Temporal_Inf_R', ...
-    'Occipital_Sup_L', 'Occipital_Sup_R', 'Occipital_Mid_L', 'Occipital_Mid_R', ...
-    'Occipital_Inf_L', 'Occipital_Inf_R', 'Cuneus_L', 'Cuneus_R', 'Calcarine_L', 'Calcarine_R', ...
-    'Lingual_L', 'Lingual_R', 'Insula_L', 'Insula_R'};
-roi_indices = find(ismember(atlas.tissuelabel, cortical_rois));
-centroid_positions = zeros(length(roi_indices), 3);
-for i = 1:length(roi_indices)
-    roi_labels{i} = atlas.tissuelabel{i};
-    roi_mask = atlas.tissue == roi_indices(i);
-    [x, y, z] = ind2sub(size(atlas.tissue), find(roi_mask));
-    centroid_positions(i, :) = mean([x, y, z], 1);
-end
-
-% create a custom source model grid
-source_model = [];
-source_model.pos = centroid_positions;  
-source_model.inside = true(length(centroid_positions), 1); 
-source_model.unit = 'mm';  
-
-
+% check electrode positions on the scalp
+load(params.path_headmodel,'vol');
 figure;
-ft_plot_headmodel(headmodel, 'facealpha', 0.6)
+ft_plot_headmodel(vol,'facealpha',0.1,'facecolor',[0.1 0.1 0.1],'edgecolor',[1 1 1],'edgealpha',0.5);
 hold on;
-ft_plot_mesh(source_model.pos, 'vertexcolor', 'r', 'vertexsize', 10);  
+ft_plot_sens(elec,'style','r','label','label','elec','true','elecshape','disc','elecsize',5,'facecolor','r');
+view(90,0);
 
-rois = {'Frontal_Sup_L', 'Frontal_Sup_R', 'Frontal_Mid_L', 'Frontal_Mid_R', 'Heschl_L', 'Heschl_R'};
+% prepare source model --> centroid positons from Schaefer atlas
+atlas = readtable(params.path_atlas);
 cfg = [];
-cfg.atlas = atlas;
-cfg.roi = rois;
-cfg.inputcoord = 'mni';  
+cfg.method = 'basedonpos';
+cfg.sourcemodel.pos = [atlas.R, atlas.A, atlas.S];
+cfg.unit = 'mm';
+cfg.headmodel = params.path_headmodel;
+sourcemodel_atlas = ft_prepare_sourcemodel(cfg);
+sourcemodel_atlas.coordsys = 'mni';
 
-leadfield = load(sprintf('%s\\FieldTrip\\template\\sourcemodel\\standard_sourcemodel3d10mm.mat', folder.toolbox));
-% figure;
-% ft_plot_mesh(leadfield.sourcemodel.pos(leadfield.sourcemodel.inside,:), 'vertexsize', 20);
+% compute source estimation for all datasets/trials
+fprintf('estimating source activity:\n')
+for d = 1:length(dataset)
+    % provide update
+    fprintf('subject %d - condition %d:\n', dataset(d).subject, dataset(d).condition)
 
-% create a source model based on the atlas ROIs
-
-mask = ft_volumelookup(cfg, mri);
-
-% Visualize the ROIs
-figure;
-ft_plot_vol(atlas);  % Plot the atlas
-hold on;
-ft_plot_mesh(roi_grid.pos, 'vertexsize', 20);  % Plot the ROI positions
-title('ROIs based on AAL atlas');
-
-% identify RS-EEG data 
-files2process = dir(sprintf('%s\\%s_%s\\%s*.mat', folder.input, study, NLEP_info.single_subject(subject_idx).ID, param.prefix_data{1}));
-files2process = [files2process; dir(sprintf('%s\\%s_%s\\%s*.mat', folder.input, study, NLEP_info.single_subject(subject_idx).ID, param.prefix_data{2}))];
-
-% concatenate datasets into a FieldTrip data structure 
-for f = 1:length(files2process)
-    % prepare data structure
-    if ~exist('data_all')
-        data_all = struct;
-        data_all.trial = []; data_all.time = []; data_all.trialinfo = [];
+    % load data into a FieldTrip-compatible data structure
+    data = [];
+    data.label = {header.chanlocs.labels}';
+    data.fsample = dataset(d).SR;
+    data.trial = cell(size(dataset(d).data, 1), 1);
+    data.time = cell(size(dataset(d).data, 1), 1);
+    for a = 1:size(dataset(d).data, 1)
+        data.trial{a} = squeeze(dataset(d).data(a, :, :));
+        data.time{a} = squeeze(dataset(d).times);
     end
+    data.elec = elec;
 
-    % load letswave data and header
-    load(sprintf('%s\\%s', files2process(f).folder, files2process(f).name))
-    load(sprintf('%s\\%s.lw6', files2process(f).folder, files2process(f).name(1:end-4)), '-mat')
-    data = squeeze(data);   
+    % estimate source activity
+    if params.single_trial
+        % prepare forward model = leadfield
+        cfg = [];
+        cfg.sourcemodel = sourcemodel_atlas;
+        cfg.headmodel = params.path_headmodel;
+        cfg.elec = data.elec; 
+        cfg.normalize = 'yes';
+        leadfield = ft_prepare_leadfield(cfg, data);
 
-    % fill in common information
-    if ~exist('data_all.label')
-        data_all.label = {header.chanlocs.labels};
-        data_all.fsample = 1/header.xstep;
-        data_all.cfg = [];  % start with an empty config
-    end
+        % prepare spatial filter
+        cfg = [];
+        cfg.method = params.method;
+        cfg.keeptrials = 'yes';
+        cfg.rawtrial = 'yes';
+        cfg.lcmv.keepfilter = 'yes';
+        cfg.lcmv.lambda = '5%';
+        cfg.lcmv.fixedori = 'yes';
+        cfg.lcmv.projectnoise = 'yes';
+        cfg.lcmv.weightnorm = 'arraygain';
+        cfg.sourcemodel = leadfield;
+        sources = ft_sourceanalysis(cfg, data);
 
-    % prepare data structure
-    data.trial = cell(1, size(data, 1));
-    data.time = cell(1, size(data, 1));
-    data.trialinfo = ones(length(data.trial), 1)*f;
-    
-    % fill in data
-    for i = 1:size(data, 1)
-        data.trial{i} = squeeze(data(i, :, :));
-        data.time{i} = (1:size(data, 3))/data_all.fsample;
-    end
-
-    % concatenate
-    data_all.trial = [data_all.trial, data.trial];  
-    data_all.time = [data_all.time, data.time]; 
-    data_all.trialinfo = [data_all.trialinfo; data.trialinfo]; 
-end
-data = data_all;
-ft_checkdata(data);
-
-% extract channel locations
-chanlocs = chanlocs_template;
-for a = 1:length(chanlocs.label)
-    if ismember(chanlocs.label{a}, data.label)
-        chan_idx(a) = true;
     else
-        chan_idx(a) = false;
+        % normalize time axis of the data 
+        temptime = data.time{1};
+        [data.time{:}] = deal(temptime);
+
+        % compute the covaraciance matrix from the sensor data
+        cfg = [];
+        cfg.covariance = 'yes';
+        cfg.keeptrials = 'no';
+        cfg.removemean = 'yes';
+        timelock = ft_timelockanalysis(cfg, data);
+
+        % prepare forward model = leadfield
+        cfg = [];
+        cfg.sourcemodel = sourcemodel_atlas;
+        cfg.headmodel = params.path_headmodel;
+        cfg.normalize = 'yes';
+        leadfield = ft_prepare_leadfield(cfg, data);
+
+        % prepare spatial filter
+        cfg = [];
+        cfg.method = params.method;
+        cfg.keeptrials = 'yes';
+        cfg.lcmv.keepfilter = 'yes';
+        cfg.lcmv.lambda = '5%';
+        cfg.lcmv.fixedori = 'yes';
+        cfg.lcmv.projectnoise = 'yes';
+        cfg.lcmv.weightnorm = 'arraygain';
+        cfg.sourcemodel = leadfield;
+        sources = ft_sourceanalysis(cfg, data);
     end
+
+    % save source activity to the output structure
+    AperiodicPFC_sources(d).subject = dataset(d).subject;
+    AperiodicPFC_sources(d).ID = dataset(d).ID;
+    AperiodicPFC_sources(d).condition = dataset(d).condition;
+    AperiodicPFC_sources(d).area = dataset(d).area;
+    AperiodicPFC_sources(d).side = dataset(d).side;
+    AperiodicPFC_sources(d).flipped = dataset(d).flipped;
+    AperiodicPFC_sources(d).SR = dataset(d).SR;
+    AperiodicPFC_sources(d).times = dataset(d).times;   
+    for b = 1:length(params.labels)
+        AperiodicPFC_sources(d).channels(b).label = params.labels{b};   
+        AperiodicPFC_sources(d).channels(b).position = elec.chanpos(b, :); 
+    end
+    AperiodicPFC_sources(d).sources = atlas; 
+    AperiodicPFC_sources(d).orientation = sources.trial(1).ori'; 
+    AperiodicPFC_sources(d).filter = sources.trial(1).filter; 
+    for c = 1:length(sources.trial)
+        for s = 1:height(atlas)
+            AperiodicPFC_sources(d).data(c, s, :) = sources.trial(c).mom{s}; 
+        end
+    end
+    AperiodicPFC_sources(d).EEG = dataset(d).data;
 end
-chanlocs.label = chanlocs.label(chan_idx);
-chanlocs.chantype = chanlocs.chantype(chan_idx);
-chanlocs.chanunit = chanlocs.chanunit(chan_idx);
-chanlocs.chanpos = chanlocs.chanpos(chan_idx, :);
-chanlocs.elecpos = chanlocs.elecpos(chan_idx, :);
-[~,idx] = ismember(data.label', chanlocs.label);
-chanlocs.label = chanlocs.label(idx);
-chanlocs.chantype = chanlocs.chantype(idx);
-chanlocs.chanunit = chanlocs.chanunit(idx);
-chanlocs.chanpos = chanlocs.chanpos(idx, :);
-chanlocs.elecpos = chanlocs.elecpos(idx, :);
+save('AperiodicPFC_sources.mat', 'AperiodicPFC_sources', '-v7.3'); 
 
-% add fiducials
-fiducials = {'LPA', 'RPA', 'Nz'};
-for f = 1:length(fiducials)
-    [~,idx] = ismember(fiducials(f), chanlocs_template.label);
-    chanlocs.label(end+1) = chanlocs_template.label(idx);
-    chanlocs.chantype(end+1) = chanlocs_template.chantype(idx);
-    chanlocs.chanunit(end+1) = chanlocs_template.chanunit(idx);
-    chanlocs.chanpos(end+1,:) = chanlocs_template.chanpos(idx, :);
-    chanlocs.elecpos(end+1,:) = chanlocs_template.elecpos(idx, :);
+% clean and continue
+clear a b c d s elec atlas cfg sourcemodel_atlas leadfield data header  ...
+    dataset temptime timelock row_counter sources surface vol
+fprintf('section finished.\n\n')
+
+%% sensor-space analysis: extract aperiodic exponent
+% ----- section input -----
+% -------------------------
+
+% clean and continue
+clear 
+fprintf('section finished.\n\n')
+
+%% sensor-space analysis: export for R  
+% ----- section input -----
+% -------------------------
+
+% clean and continue
+clear 
+fprintf('section finished.\n\n')
+
+
+%% sensor-space analysis: visualization 
+% ----- section input -----
+% -------------------------
+
+% clean and continue
+clear 
+fprintf('section finished.\n\n')
+
+%% functions
+function export_EEGLAB(lwdata, filename, subj)
+% =========================================================================
+% exports data from letswave to EEGLAB format
+% =========================================================================  
+% dataset
+EEG.setname = filename;
+EEG.filename = [];
+EEG.filepath = [];
+EEG.subject = subj; 
+EEG.session = 1;
+    
+% time properties
+EEG.nbchan = lwdata.header.datasize(2);
+EEG.trials = lwdata.header.datasize(1);
+EEG.pnts = lwdata.header.datasize(6);
+EEG.srate = 1/lwdata.header.xstep;
+EEG.times = lwdata.header.xstart + (0:EEG.pnts-1)*lwdata.header.xstep;
+EEG.xmin = EEG.times(1);
+EEG.xmax = EEG.times(end);
+EEG.data = permute(single(lwdata.data),[2,6,1,3,4,5]);
+EEG.chanlocs = rmfield(lwdata.header.chanlocs, 'SEEG_enabled');
+EEG.chanlocs = rmfield(lwdata.header.chanlocs, 'topo_enabled');
+    
+% create events with appropriate latencies
+EEG.event = lwdata.header.events;
+if ~isempty(EEG.event)
+    [EEG.event.type] = EEG.event.code;
+    for e = 1:length(EEG.event)
+        EEG.event(e).latency = (e-1)*EEG.pnts + EEG.xmin*(-1)*EEG.srate;
+    end
+    EEG.event = rmfield(EEG.event,'code');
 end
-
-% align the electrodes with the template MRI
-cfg = [];
-cfg.method = 'interactive';
-cfg.elec = data.elec;
-cfg.headshape = headmodel.bnd(1); 
-data.elec = ft_electroderealign(cfg);
-
-% check data
-data.elec = chanlocs;
-% ft_plot_sens(data.elec, 'style', 'k*', 'label', 'label');
-ft_checkdata(data);
-
-% align electrode positions
-cfg = [];
-cfg.method = 'interactive';
-cfg.elec = data.elec;
-cfg.headshape = headmodel.bnd(1);
-cfg.template = chanlocs_template;
-cfg.channel = 'all';
-data.elec = ft_electroderealign(cfg);
-ft_checkdata(data);
-
-% loop through trials
-source_trials = cell(1, length(data.trial));
-for i = 1:length(data.trial)
-    % extract the i-th trial data
-    cfg = [];
-    cfg.trials = i;
-    single_trial = ft_selectdata(cfg, data);
-
-    % compute the covariance matrix for the single trial
-    cfg = [];
-    cfg.covariance = 'yes';
-    cfg.covariancewindow = 'all';  % Use the whole time window for covariance computation
-    timelock = ft_timelockanalysis(cfg, single_trial);
-
-    % perform source analysis for the single trial
-    cfg = [];
-    cfg.method = 'lcmv';
-    cfg.grid = leadfield;            % Use the prepared lead field
-    cfg.headmodel = headmodel;       % Use the head model (BEM)
-    cfg.lcmv.keepfilter = 'yes';     % Keep the spatial filter
-    cfg.lcmv.lambda = '5%';          % Regularization parameter
-    cfg.lcmv.fixedori = 'yes';       % Fixed orientation of dipoles
-    cfg.lcmv.projectnoise = 'yes';   % Project noise for visualization
-    source = ft_sourceanalysis(cfg, timelock);
-
-    % store the result for the i-th trial
-    source_trials{i} = source;
+    
+% create required empty fields
+EEG.icawinv = [];
+EEG.icaweights = [];
+EEG.icasphere = [];
+EEG.icaweights = [];
+EEG.icaweights = [];
+EEG.icaweights = [];
+EEG.icaweights = [];
+save([filename,'.set'], 'EEG');
+end
+function elec = create_elec(params, header)
+% =========================================================================
+% creates elec structure from loaded electrode location file
+% =========================================================================  
+elec_idx = ismember(params.elec_template.label, {header.chanlocs.labels}');
+if sum(elec_idx) ~= length({header.chanlocs.labels})
+    error('ERROR: subject %d, condition %d - channel labels do not match!', s, c)
+end
+elec.chanpos = params.elec_template.chanpos(elec_idx,:);
+elec.chantype = params.elec_template.chantype(elec_idx,:);
+elec.chanunit = params.elec_template.chanunit(elec_idx,:);
+elec.elecpos = params.elec_template.elecpos(elec_idx,:);
+elec.label = params.elec_template.label(elec_idx,:);
+[~, elec_orig] = sort({header.chanlocs.labels}');
+[~, elec_new] = sort(elec_orig); 
+[~, elec_temp] = sort(elec.label);
+elec.chanpos = elec.chanpos(elec_temp(elec_new), :);
+elec.chantype = elec.chantype(elec_temp(elec_new), :);
+elec.chanunit = elec.chanunit(elec_temp(elec_new), :);
+elec.elecpos = elec.elecpos(elec_temp(elec_new), :);
+elec.label = elec.label(elec_temp(elec_new), :);
+elec.type = 'custom';
+elec.unit = params.elec_template.unit;
 end
