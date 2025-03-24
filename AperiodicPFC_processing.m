@@ -736,6 +736,11 @@ params.method = 'lcmv';
 params.single_trial = true;
 params.path_atlas = 'Schaefer2018_100Parcels_7Networks_order_FSLMNI152_1mm.Centroid_RAS.csv';
 params.path_headmodel = 'standard_bem.mat';
+params.colours = [1.0000    0.0745    0.6510; 
+    0.4745    0.3176    0.9098];
+params.ratio_threshold = 0.001;
+params.source_threshold = 60;
+params.trial_threshold = 25;
 % -------------------------
 
 % load dataset if necessary
@@ -867,12 +872,255 @@ for d = 1:length(dataset)
 end
 save('AperiodicPFC_sources.mat', 'AperiodicPFC_sources', '-v7.3'); 
 
+% quality check
+for s = 1:params.subjects
+    % select data of this subject
+    data_idx = false(1, length(AperiodicPFC_sources));
+    for a = 1:length(AperiodicPFC_sources)
+        if AperiodicPFC_sources(a).subject == s
+            data_idx(a) = true;
+        end
+    end
+    data = AperiodicPFC_sources(data_idx);
+
+    % plot real-part activity over all sources to check signal timecourse
+    fprintf('subject %d:\nplotting the source activity...\n', s)
+    fig = figure(figure_counter);
+    set(fig, 'units', 'normalized', 'outerposition', [0 0 1 1])
+    for d = 1:length(data)
+        for b = 1:size(data(d).data, 2)
+            subplot(10, 10, b)
+            for c = 1:size(data(d).data, 1)
+                plot(data(d).times, real(squeeze(data(d).data(c, b, :))'), Color = params.colours(d, :));
+                hold on
+            end
+            title(data(d).sources.ROIName{b})
+        end
+    end
+    sgtitle(sprintf('source activity - subject %d (%s)', s, data(1).ID))
+    saveas(fig, sprintf('%s\\figures\\source_activity_%s.png', folder.output, data(1).ID))
+    figure_counter = figure_counter + 1;
+
+    % check for the contribution of imaginary components - claculate
+    % imaginary/real ratio per trial-source bin
+    fprintf('checking the contribution of imaginary parts...\n')
+    ratio = [];
+    for d = 1:length(data)
+        for b = 1:size(data(d).data, 2)
+            for c = 1:size(data(d).data, 1)
+                data_st = squeeze(data(d).data(c, b, :))';
+                ratio(d, b, c) = max(abs(imag(data_st))) / max(abs(real(data_st)));
+            end
+        end
+    end
+    flagged = ratio > params.ratio_threshold;
+    ratio =  permute(ratio, [1, 3, 2]);
+    ratio = reshape(ratio, 2 * size(ratio, 2), size(ratio, 3));
+    source_stats(s).subject = s;
+    source_stats(s).ID = data(1).ID;
+    source_stats(s).ratio.mean = mean(ratio, 'all');
+    source_stats(s).ratio.threshold = params.ratio_threshold;
+    source_stats(s).ratio.flagged = (sum(flagged, 'all') / numel(ratio));
+    source_stats(s).flagged_data = flagged;
+    fprintf('--> mean ratio %d\n', source_stats(s).ratio.mean)
+    fprintf('--> %d%% of trial-source bins flagged (threshold %d)\n', ...
+        source_stats(s).ratio.flagged * 100, params.ratio_threshold)
+    
+    % check the distribution of high ratios across sources
+    flagged_source =  permute(flagged, [1, 3, 2]);
+    flagged_source = reshape(flagged_source, 2 * size(flagged_source, 2), size(flagged_source, 3));
+    flagged_source = sum(flagged_source, 1);
+    flagged_source_num = find(flagged_source > params.source_threshold);
+    source_stats(s).bad_sources.threshold = params.source_threshold;
+    if ~isempty(flagged_source_num)
+        flagged_source_label = data(1).sources.ROIName(flagged_source_num);
+        source_stats(s).bad_sources.number = flagged_source_num;        
+        source_stats(s).bad_sources.label = flagged_source_label;
+        fprintf('--> %d bad sources identified.\n', length(flagged_source_num))
+    else
+        source_stats(s).bad_sources.number = [];        
+        source_stats(s).bad_sources.label = {};
+    end
+    fig = figure(figure_counter);
+    bar(flagged_source);
+    xticks(flagged_source_num);
+    xticklabels(flagged_source_label);
+    xtickangle(40);
+    xlabel('source');
+    ylabel('number of flagged trials');
+    title(sprintf('flagged trials per source - subject %d (%s)', s, data(1).ID));
+    saveas(fig, sprintf('%s\\figures\\source_bad_%s.png', folder.output, data(1).ID))
+    figure_counter = figure_counter + 1;
+
+    % check variance across time for each source and trial
+    fprintf('checking variance across timepoints...\n')
+    variance = [];
+    for d = 1:length(data)
+        for b = 1:size(data(d).data, 2)
+            for c = 1:size(data(d).data, 1)
+                data_st = squeeze(data(d).data(c, b, :))';
+                variance(d, b, c) = var(data_st);
+            end
+        end
+    end
+    var_threshold = mean(variance(:)) + 3*std(variance(:));
+    flagged = variance > var_threshold;
+    variance =  permute(variance, [1, 3, 2]);
+    variance = reshape(variance, 2 * size(variance, 2), size(variance, 3));
+    source_stats(s).variance.mean = mean(variance, 'all');
+    source_stats(s).variance.threshold = var_threshold;
+    source_stats(s).variance.flagged = (sum(flagged, 'all') / numel(variance));
+    fprintf('--> mean variance %d\n', source_stats(s).variance.mean)
+    fprintf('--> %d%% of trial-source bins flagged (threshold %d)\n', ...
+        source_stats(s).variance.flagged * 100, var_threshold)
+    fig = figure(figure_counter);
+    set(fig, 'units', 'normalized', 'outerposition', [0.2 0.3 0.7 0.6])
+    subplot(1, 2, 1)
+    imagesc(variance);
+    colorbar; xlabel('source'); ylabel('trial');
+    title('variance heatmap');
+    subplot(1, 2, 2)
+    histogram(variance(:));
+    xlabel('variance'); ylabel('frequency');
+    title('variance distribution');
+    sgtitle(sprintf('source activity variance - subject %d (%s)', s, data(1).ID));
+    saveas(fig, sprintf('%s\\figures\\source_variance_%s.png', folder.output, data(1).ID))
+    figure_counter = figure_counter + 1;
+
+    % check the distribution of high variance across trials
+    fprintf('checking for bad trials...\n')
+    for d = 1:length(data) 
+        flagged_trial = squeeze(flagged(d, :, :))';
+        flagged_trial = sum(flagged_trial, 2);
+        flagged_trial_num = find(flagged_trial > params.trial_threshold);
+        source_stats(s).bad_trials(d).condition = data(d).condition; 
+        source_stats(s).bad_trials(d).threshold = params.trial_threshold;
+        source_stats(s).bad_trials(d).trials = flagged_trial_num; 
+    end
+    flagged_trial_num = [source_stats(s).bad_trials(1).trials; source_stats(s).bad_trials(2).trials];
+    if ~isempty(flagged_trial_num)
+        fprintf('--> %d bad trials identified across both conditions.\n', length(flagged_trial_num))
+    end
+    fprintf('\n')
+end
+AperiodicPFC_quality_check = source_stats;
+save(output_file, 'AperiodicPFC_quality_check', '-append'); 
+
 % clean and continue
 clear a b c d s elec atlas cfg sourcemodel_atlas leadfield data header  ...
-    dataset temptime timelock row_counter sources surface vol
+    dataset temptime timelock row_counter sources surface vol data_idx ...
+    fig data_st ratio flagged flagged_source flagged_source_num flagged_source_label ...
+    variance var_threshold flagged_trial flagged_trial_num source_stats
+ fprintf('section finished.\n\n')
+
+%% source-space analysis: extract aperiodic exponent
+% ----- section input -----
+params.foi = [5 80];
+params.roi.FPN = {'7Networks_LH_Cont_PFCl_1', '7Networks_RH_Cont_PFCl_1', '7Networks_RH_Cont_PFCl_2', ...
+    '7Networks_RH_Cont_PFCl_3', '7Networks_RH_Cont_PFCl_4', '7Networks_RH_Cont_PFCmp_1'};
+params.roi.Salience = {'7Networks_LH_SalVentAttn_PFCl_1', '7Networks_LH_SalVentAttn_Med_1', ...
+    '7Networks_LH_SalVentAttn_Med_2', '7Networks_LH_SalVentAttn_Med_3', ...
+    '7Networks_RH_SalVentAttn_Med_1', '7Networks_RH_SalVentAttn_Med_2'};
+params.roi.DMN = {'7Networks_LH_Default_PFC_1', '7Networks_LH_Default_PFC_2', '7Networks_LH_Default_PFC_3', ...
+    '7Networks_LH_Default_PFC_4', '7Networks_LH_Default_PFC_5', '7Networks_LH_Default_PFC_6', '7Networks_LH_Default_PFC_7', ...
+    '7Networks_RH_Default_PFCv_1', '7Networks_RH_Default_PFCv_2', ...
+    '7Networks_RH_Default_PFCdPFCm_1', '7Networks_RH_Default_PFCdPFCm_2', '7Networks_RH_Default_PFCdPFCm_3'};
+params.roi.Visual = {'7Networks_LH_Vis_2', '7Networks_LH_Vis_4', '7Networks_LH_Vis_5', ...
+    '7Networks_RH_Vis_4', '7Networks_RH_Vis_5', '7Networks_RH_Vis_8' };
+% -------------------------
+
+% load data if necessary
+if exist('AperiodicPFC_sources') ~= 1 
+    load('AperiodicPFC_sources.mat')
+end
+if exist('AperiodicPFC_quality_check') ~= 1
+    load(output_file, 'AperiodicPFC_quality_check')
+end
+if exist('AperiodicPFC_measures') ~= 1
+    load(output_file, 'AperiodicPFC_measures')
+end
+if exist('AperiodicPFC_data') ~= 1
+    load(output_file, 'AperiodicPFC_data')
+end
+
+% calculate PSD for all datasets/trials/sources
+addpath(genpath([folder.toolbox '\FieldTrip']));
+fprintf('computing single-trial PSD...\n')
+for a = 1:length(AperiodicPFC_sources)
+    % select data, remove bad sources and trials 
+    data = AperiodicPFC_sources(a).data;  
+    s = AperiodicPFC_sources(a).subject;
+    c = AperiodicPFC_sources(a).condition;
+    data(:, AperiodicPFC_quality_check(s).bad_sources.number, :) = [];  
+    idx = false(1, size(data, 1));
+    for d = 1:size(data, 1)
+        if ismember(d, AperiodicPFC_quality_check(s).bad_trials(c).trials')
+            idx(d) = true;
+        end
+    end
+    data(idx, :, :) = [];
+
+    % encode info to the output structure
+    AperiodicPFC_data(s).PSD_source(c).condition = c;
+    AperiodicPFC_data(s).PSD_source(c).trials = size(data, 1);
+    AperiodicPFC_data(s).PSD_source(c).trials_removed = AperiodicPFC_quality_check(s).bad_trials(c).trials';
+    AperiodicPFC_data(s).PSD_source(c).sources = AperiodicPFC_sources(a).sources;
+    AperiodicPFC_data(s).PSD_source(c).sources(AperiodicPFC_quality_check(s).bad_sources.number, :) = [];
+
+    % compute frequency power spectrum for each trial and source    
+    PSD = struct; 
+    for d = 1:size(data, 1)
+        % create a FieldTrip data structure
+        cfg = [];
+        cfg.trial = {squeeze(data(d, :, :))};       
+        cfg.time = {AperiodicPFC_sources(a).times};      
+        cfg.fsample = AperiodicPFC_sources(a).SR;
+        cfg.label = AperiodicPFC_data(s).PSD_source(c).sources.ROIName;  
+        cfg.sampleinfo = [1 1000];
+        data_trial = ft_datatype_raw(cfg);
+        ft_checkdata(data_trial);
+
+        % extract original spectra
+        cfg = [];
+        cfg.output = 'pow';
+        cfg.foilim = params.foi;  
+        cfg.pad = 'nextpow2'; 
+        cfg.method = 'irasa';  
+        cfg.tapsmofrq = []; 
+        cfg.output = 'original';
+        PSD(d).original = ft_freqanalysis(cfg, data_trial);
+
+        % extract fractal specra
+        cfg.output = 'fractal';
+        PSD(d).fractal = ft_freqanalysis(cfg, data_trial);
+
+        % compute oscillatory spectra
+        cfg = [];
+        cfg.parameter = 'powspctrm';
+        cfg.operation     = 'x2-x1';
+        PSD(d).oscillatory = ft_math(cfg, PSD(d).fractal, PSD(d).original);
+    end
+
+    % encode data to the output structure
+    AperiodicPFC_data(s).PSD_source(c).freq = PSD(1).original.freq;  
+    for d = 1:length(PSD)
+        AperiodicPFC_data(s).PSD_source(c).original(d, :, :) = PSD(d).original.powspctrm;
+        AperiodicPFC_data(s).PSD_source(c).fractal(d, :, :) = PSD(d).fractal.powspctrm;
+        AperiodicPFC_data(s).PSD_source(c).oscillatory(d, :, :) = PSD(d).oscillatory.powspctrm;
+    end
+end
+fprintf('done.\n')
+save('AperiodicPFC_data2.mat', 'AperiodicPFC_data', '-v7.3'); 
+
+% identify target and control regions
+
+% extract aperiodic measures for ROIs
+
+% clean and continue
+clear a c d s idx data cfg data_trial PSD_trial
 fprintf('section finished.\n\n')
 
-%% sensor-space analysis: extract aperiodic exponent
+%% source-space analysis: export for R  
 % ----- section input -----
 % -------------------------
 
@@ -880,16 +1128,8 @@ fprintf('section finished.\n\n')
 clear 
 fprintf('section finished.\n\n')
 
-%% sensor-space analysis: export for R  
-% ----- section input -----
-% -------------------------
 
-% clean and continue
-clear 
-fprintf('section finished.\n\n')
-
-
-%% sensor-space analysis: visualization 
+%% source-space analysis: visualization 
 % ----- section input -----
 % -------------------------
 
