@@ -186,8 +186,7 @@ Here, the collected data is used to investigate, whether the momentary excitabil
 ## DATA IMPORT
 ```{r,message=FALSE,warning=FALSE}
 # read .csv files
-foi <- 'high'
-data_all <- read_csv(file.path(wd_path, paste0('AperiodicPFC_export_', foi, '.csv')))
+data_all <- read_csv(file.path(wd_path, paste0('AperiodicPFC_export_sources.csv')))
 data2exclude <- read_csv2(file.path(wd_path, 'AperiodicPFC_data2exclude.csv'))
 data2exclude <- data2exclude %>%
   filter(!is.na(subject))
@@ -377,7 +376,7 @@ rm(areas, variables, ar, var, data_ratings, output)
 ```{r}
 # define variables
 areas <- c('hand', 'foot')
-regions <- c('target', 'ctrl')
+regions <- c('lateral', 'medial', 'visual')
 variables <- c('exponent', 'offset')
 
 # prepare outcome df
@@ -390,12 +389,12 @@ outcome_APC <- data.frame(area = character(),
                           stringsAsFactors = FALSE)
 
 # loop through areas, regions, and variables 
-# for (ar in areas) {
+for (ar in areas) {
   for (reg in regions) {
     for (var in variables) {
       # filter the data for the current area and brain region
       data_APC <- data_all %>% 
-        # filter(area == !!ar) %>% 
+        filter(area == !!ar) %>%
         filter(region == !!reg) 
       
       # summarize and plot
@@ -403,7 +402,7 @@ outcome_APC <- data.frame(area = character(),
       
       # append the results to the outcome variable
       outcome_APC <- outcome_APC %>%
-        add_row(#area = ar,
+        add_row(area = ar,
                 region = reg,
                 variable = var,
                 mean = output$summary_stats$mean,
@@ -411,33 +410,47 @@ outcome_APC <- data.frame(area = character(),
                 sem = output$summary_stats$sem)
     
       # save the plots as SVG files
-      save_plot(paste0(wd_path, '\\figures\\APC_', foi,  '_', var, "_", reg, "_distribution.svg"), output$dist_plot)
-      save_plot(paste0(wd_path, '\\figures\\APC_', foi,  '_', var, "_", reg, "_subjects.svg"), output$dot_plot)
+      save_plot(paste0(wd_path, '\\figures\\APC-source_', ar, '_', var, "_", reg, "_distribution.svg"), output$dist_plot)
+      save_plot(paste0(wd_path, '\\figures\\APC-source_', ar, '_', var, "_", reg, "_subjects.svg"), output$dot_plot)
     }
   }
-# }
+}
 print(outcome_APC)
 
 # loop through areas and variables, group by regions
-# for (ar in areas) {
+for (ar in areas) {
   for (var in variables) {
-      # # filter the data for the current peak
-      # data_APC <- data_all %>% 
-      #   filter(area == !!ar) 
+      # filter the data for the current peak
+      data_APC <- data_all %>%
+        filter(area == !!ar)
       
       # summarize and plot
-      # output <- summarize_and_plot(data_APC, var, group_vars = 'region')
-      output <- summarize_and_plot(data_all, var, group_vars = 'region')
+      output <- summarize_and_plot(data_APC, var, group_vars = 'region')
+      # output <- summarize_and_plot(data_all, var, group_vars = 'region')
       
       # display distribution
       print(output$dist_plot_group)
-      save_plot(paste0(wd_path, '\\figures\\APC_', foi,  '_', var, "_distribution_all.svg"), output$dist_plot_group)
+      save_plot(paste0(wd_path, '\\figures\\APC-source_', ar, '_', var,  "_distribution_all.svg"), output$dist_plot_group)
       
       # display boxplot
       print(output$boxplot_group)
-      save_plot(paste0(wd_path, '\\figures\\APC_', foi,  '_', var, "_boxplot_all.svg"), output$boxplot_group)
+      save_plot(paste0(wd_path, '\\figures\\APC-source_', ar, '_', var,  "_boxplot_all.svg"), output$boxplot_group)
   }
-# }
+}
+
+# loop through variables, group by regions
+for (var in variables) {
+    # summarize and plot
+    output <- summarize_and_plot(data_all, var, group_vars = 'region')
+    
+    # display distribution
+    print(output$dist_plot_group)
+    save_plot(paste0(wd_path, '\\figures\\APC-source_avg_', var,  "_distribution_all.svg"), output$dist_plot_group)
+    
+    # display boxplot
+    print(output$boxplot_group)
+    save_plot(paste0(wd_path, '\\figures\\APC-source_avg_', var,  "_boxplot_all.svg"), output$boxplot_group)
+}
 rm(areas, regions, variables, ar, reg, var, data_APC, output)
 ```
 
@@ -447,175 +460,7 @@ rm(areas, regions, variables, ar, reg, var, data_APC, output)
 # subset the dataset
 data <- data_all %>%
   filter(component == "N1") %>% 
-  select(c('subject', 'age', 'male', 'dominant', 'area', 'region', 'amplitude', 'exponent', 'offset')) 
-
-# check for multicollinearity predictors --> Variance Inflation Factors (VIF)
-lm_check <- lm(amplitude ~ exponent + offset + region + area, data = data)
-vif(lm_check)
-# ==> We see very high collinearity between the aperiodic exponent and offset. We will therefore not add offset as a covariate.
-
-# empty model
-model_null <- lmer(amplitude ~ 1 + (1 | subject), data = data)
-anova(model_null)
-outliers <- check_model(model_null, data)
-
-# basic model = only with exponent 
-model_basic <- lmer(amplitude ~ exponent + (1 | subject), data = data)
-anova(model_basic)
-outliers <- check_model(model_basic, data)
-
-# full model = with main covariates
-model_full <- lmer(amplitude ~ exponent + region + area + (1 | subject), data = data)
-anova(model_full)
-outliers <- check_model(model_full, data)
-
-# interaction model = includes an interaction between exponent and brain region
-model_interaction <- lmer(amplitude ~ exponent * region + area + (1 | subject), data = data)
-anova(model_interaction)
-outliers <- check_model(model_interaction, data)
-
-# compare models
-anova(model_null, model_basic, model_full, model_interaction)
-AIC(model_null, model_basic, model_full, model_interaction)
-
-# apply log-transformation to the outcome variable
-min_value <- min(data$amplitude, na.rm = TRUE)
-data <- data %>%
-  mutate(amplitude_shifted = amplitude - min_value + 1,
-    amplitude_log = log(amplitude_shifted))
-model_log <- lmer(amplitude_log ~ exponent + region + area + (1 | subject),
-  data = data)
-anova(model_log)
-outliers <- check_model(model_log, data)
-```
-
-# N1 latency
-```{r}
-# subset the dataset
-data <- data_all %>%
-  filter(component == "N1") %>% 
-  select(c('subject', 'age', 'male', 'dominant', 'area', 'region', 'latency', 'exponent', 'offset')) 
-
-# check for multicollinearity predictors --> Variance Inflation Factors (VIF)
-lm_check <- lm(latency ~ exponent + offset + region + area, data = data)
-vif(lm_check)
-# ==> We see very high collinearity between the aperiodic exponent and offset. We will therefore not add offset as a covariate.
-
-# empty model
-model_null <- lmer(latency ~ 1 + (1 | subject), data = data)
-anova(model_null)
-outliers <- check_model(model_null, data)
-
-# basic model = only with exponent 
-model_basic <- lmer(latency ~ exponent + (1 | subject), data = data)
-anova(model_basic)
-outliers <- check_model(model_basic, data)
-
-# full model = with main covariates
-model_full <- lmer(latency ~ exponent + region + area + (1 | subject), data = data)
-anova(model_full)
-outliers <- check_model(model_full, data)
-
-# interaction model = includes an interaction between exponent and brain region
-model_interaction <- lmer(latency ~ exponent * region + area + (1 | subject), data = data)
-anova(model_interaction)
-outliers <- check_model(model_interaction, data)
-
-# compare models
-anova(model_null, model_basic, model_full, model_interaction)
-AIC(model_null, model_basic, model_full, model_interaction)
-```
-
-# N2 amplitude
-```{r}
-# subset the dataset
-data <- data_all %>%
-  filter(component == "N2") %>% 
-  select(c('subject', 'age', 'male', 'dominant', 'area', 'region', 'amplitude', 'exponent', 'offset')) 
-
-# check for multicollinearity predictors --> Variance Inflation Factors (VIF)
-lm_check <- lm(amplitude ~ exponent + offset + region + area, data = data)
-vif(lm_check)
-# ==> We see very high collinearity between the aperiodic exponent and offset. We will therefore not add offset as a covariate.
-
-# empty model
-model_null <- lmer(amplitude ~ 1 + (1 | subject), data = data)
-anova(model_null)
-outliers <- check_model(model_null, data)
-
-# basic model = only with exponent 
-model_basic <- lmer(amplitude ~ exponent + (1 | subject), data = data)
-anova(model_basic)
-outliers <- check_model(model_basic, data)
-
-# full model = with main covariates
-model_full <- lmer(amplitude ~ exponent + region + area + (1 | subject), data = data)
-anova(model_full)
-outliers <- check_model(model_full, data)
-
-# interaction model = includes an interaction between exponent and brain region
-model_interaction <- lmer(amplitude ~ exponent * region + area + (1 | subject), data = data)
-anova(model_interaction)
-outliers <- check_model(model_interaction, data)
-
-# compare models
-anova(model_null, model_basic, model_full, model_interaction)
-AIC(model_null, model_basic, model_full, model_interaction)
-
-# apply log-transformation to the outcome variable
-min_value <- min(data$amplitude, na.rm = TRUE)
-data <- data %>%
-  mutate(amplitude_shifted = amplitude - min_value + 1,
-    amplitude_log = log(amplitude_shifted))
-model_log <- lmer(amplitude_log ~ exponent + region + area + (1 | subject),
-  data = data)
-anova(model_log)
-outliers <- check_model(model_log, data)
-```
-
-# N2 latency
-```{r}
-# subset the dataset
-data <- data_all %>%
-  filter(component == "N2") %>% 
-  select(c('subject', 'age', 'male', 'dominant', 'area', 'region', 'latency', 'exponent', 'offset')) 
-
-# check for multicollinearity predictors --> Variance Inflation Factors (VIF)
-lm_check <- lm(latency ~ exponent + offset + region + area, data = data)
-vif(lm_check)
-# ==> We see very high collinearity between the aperiodic exponent and offset. We will therefore not add offset as a covariate.
-
-# empty model
-model_null <- lmer(latency ~ 1 + (1 | subject), data = data)
-anova(model_null)
-outliers <- check_model(model_null, data)
-
-# basic model = only with exponent 
-model_basic <- lmer(latency ~ exponent + (1 | subject), data = data)
-anova(model_basic)
-outliers <- check_model(model_basic, data)
-
-# full model = with main covariates
-model_full <- lmer(latency ~ exponent + region + area + (1 | subject), data = data)
-anova(model_full)
-outliers <- check_model(model_full, data)
-
-# interaction model = includes an interaction between exponent and brain region
-model_interaction <- lmer(latency ~ exponent * region + area + (1 | subject), data = data)
-anova(model_interaction)
-outliers <- check_model(model_interaction, data)
-
-# compare models
-anova(model_null, model_basic, model_full, model_interaction)
-AIC(model_null, model_basic, model_full, model_interaction)
-```
-
-# P2 amplitude
-```{r}
-# subset the dataset
-data <- data_all %>%
-  filter(component == "P2") %>% 
-  select(c('subject', 'age', 'male', 'dominant', 'area', 'region', 'amplitude', 'exponent', 'offset')) 
+  select(c('subject', 'age', 'component', 'dominant', 'area', 'region', 'amplitude', 'exponent', 'offset')) 
 
 # check for multicollinearity predictors --> Variance Inflation Factors (VIF)
 lm_check <- lm(amplitude ~ exponent + offset + region + area, data = data)
@@ -654,15 +499,17 @@ data <- data %>%
 model_log <- lmer(amplitude_log ~ exponent * region + area + (1 | subject),
   data = data)
 anova(model_log)
+anova_table <- anova(model_log)
+view(anova_table)
 outliers <- check_model(model_log, data)
 ```
 
-# P2 latency
+# N1 latency
 ```{r}
 # subset the dataset
 data <- data_all %>%
-  filter(component == "P2") %>% 
-  select(c('subject', 'age', 'male', 'dominant', 'area', 'region', 'latency', 'exponent', 'offset')) 
+  filter(component == "N1") %>% 
+  select(c('subject', 'age', 'component', 'dominant', 'area', 'region', 'latency', 'exponent', 'offset')) 
 
 # check for multicollinearity predictors --> Variance Inflation Factors (VIF)
 lm_check <- lm(latency ~ exponent + offset + region + area, data = data)
@@ -687,6 +534,184 @@ outliers <- check_model(model_full, data)
 # interaction model = includes an interaction between exponent and brain region
 model_interaction <- lmer(latency ~ exponent * region + area + (1 | subject), data = data)
 anova(model_interaction)
+anova_table <- anova(model_interaction)
+view(anova_table)
+outliers <- check_model(model_interaction, data)
+
+# compare models
+anova(model_null, model_basic, model_full, model_interaction)
+AIC(model_null, model_basic, model_full, model_interaction)
+```
+
+# N2 amplitude
+```{r}
+# subset the dataset
+data <- data_all %>%
+  filter(component == "N2") %>% 
+  select(c('subject', 'age', 'component', 'dominant', 'area', 'region', 'amplitude', 'exponent', 'offset')) 
+
+# check for multicollinearity predictors --> Variance Inflation Factors (VIF)
+lm_check <- lm(amplitude ~ exponent + offset + region + area, data = data)
+vif(lm_check)
+# ==> We see very high collinearity between the aperiodic exponent and offset. We will therefore not add offset as a covariate.
+
+# empty model
+model_null <- lmer(amplitude ~ 1 + (1 | subject), data = data)
+anova(model_null)
+outliers <- check_model(model_null, data)
+
+# basic model = only with exponent 
+model_basic <- lmer(amplitude ~ exponent + (1 | subject), data = data)
+anova(model_basic)
+outliers <- check_model(model_basic, data)
+
+# full model = with main covariates
+model_full <- lmer(amplitude ~ exponent + region + area + (1 | subject), data = data)
+anova(model_full)
+outliers <- check_model(model_full, data)
+
+# interaction model = includes an interaction between exponent and brain region
+model_interaction <- lmer(amplitude ~ exponent * region + area + (1 | subject), data = data)
+anova(model_interaction)
+outliers <- check_model(model_interaction, data)
+
+# compare models
+anova(model_null, model_basic, model_full, model_interaction)
+AIC(model_null, model_basic, model_full, model_interaction)
+
+# apply log-transformation to the outcome variable
+min_value <- min(data$amplitude, na.rm = TRUE)
+data <- data %>%
+  mutate(amplitude_shifted = amplitude - min_value + 1,
+    amplitude_log = log(amplitude_shifted))
+model_log <- lmer(amplitude_log ~ exponent * region + area + (1 | subject),
+  data = data)
+anova(model_log)
+anova_table <- anova(model_log)
+view(anova_table)
+outliers <- check_model(model_log, data)
+```
+
+# N2 latency
+```{r}
+# subset the dataset
+data <- data_all %>%
+  filter(component == "N2") %>% 
+  select(c('subject', 'age', 'component', 'dominant', 'area', 'region', 'latency', 'exponent', 'offset')) 
+
+# check for multicollinearity predictors --> Variance Inflation Factors (VIF)
+lm_check <- lm(latency ~ exponent + offset + region + area, data = data)
+vif(lm_check)
+# ==> We see very high collinearity between the aperiodic exponent and offset. We will therefore not add offset as a covariate.
+
+# empty model
+model_null <- lmer(latency ~ 1 + (1 | subject), data = data)
+anova(model_null)
+outliers <- check_model(model_null, data)
+
+# basic model = only with exponent 
+model_basic <- lmer(latency ~ exponent + (1 | subject), data = data)
+anova(model_basic)
+outliers <- check_model(model_basic, data)
+
+# full model = with main covariates
+model_full <- lmer(latency ~ exponent + region + area + (1 | subject), data = data)
+anova(model_full)
+outliers <- check_model(model_full, data)
+
+# interaction model = includes an interaction between exponent and brain region
+model_interaction <- lmer(latency ~ exponent * region + area + (1 | subject), data = data)
+anova(model_interaction)
+anova_table <- anova(model_interaction)
+view(anova_table)
+outliers <- check_model(model_interaction, data)
+
+# compare models
+anova(model_null, model_basic, model_full, model_interaction)
+AIC(model_null, model_basic, model_full, model_interaction)
+```
+
+# P2 amplitude
+```{r}
+# subset the dataset
+data <- data_all %>%
+  filter(component == "P2") %>% 
+  select(c('subject', 'age', 'component', 'dominant', 'area', 'region', 'amplitude', 'exponent', 'offset')) 
+
+# check for multicollinearity predictors --> Variance Inflation Factors (VIF)
+lm_check <- lm(amplitude ~ exponent + offset + region + area, data = data)
+vif(lm_check)
+# ==> We see very high collinearity between the aperiodic exponent and offset. We will therefore not add offset as a covariate.
+
+# empty model
+model_null <- lmer(amplitude ~ 1 + (1 | subject), data = data)
+anova(model_null)
+outliers <- check_model(model_null, data)
+
+# basic model = only with exponent 
+model_basic <- lmer(amplitude ~ exponent + (1 | subject), data = data)
+anova(model_basic)
+outliers <- check_model(model_basic, data)
+
+# full model = with main covariates
+model_full <- lmer(amplitude ~ exponent + region + area + (1 | subject), data = data)
+anova(model_full)
+outliers <- check_model(model_full, data)
+
+# interaction model = includes an interaction between exponent and brain region
+model_interaction <- lmer(amplitude ~ exponent * region + area + (1 | subject), data = data)
+anova(model_interaction)
+outliers <- check_model(model_interaction, data)
+
+# compare models
+anova(model_null, model_basic, model_full, model_interaction)
+AIC(model_null, model_basic, model_full, model_interaction)
+
+# apply log-transformation to the outcome variable
+min_value <- min(data$amplitude, na.rm = TRUE)
+data <- data %>%
+  mutate(amplitude_shifted = amplitude - min_value + 1,
+    amplitude_log = log(amplitude_shifted))
+model_log <- lmer(amplitude_log ~ exponent * region + area + (1 | subject),
+  data = data)
+anova(model_log)
+anova_table <- anova(model_log)
+view(anova_table)
+outliers <- check_model(model_log, data)
+```
+
+# P2 latency
+```{r}
+# subset the dataset
+data <- data_all %>%
+  filter(component == "P2") %>% 
+  select(c('subject', 'age', 'component', 'dominant', 'area', 'region', 'latency', 'exponent', 'offset')) 
+
+# check for multicollinearity predictors --> Variance Inflation Factors (VIF)
+lm_check <- lm(latency ~ exponent + offset + region + area, data = data)
+vif(lm_check)
+# ==> We see very high collinearity between the aperiodic exponent and offset. We will therefore not add offset as a covariate.
+
+# empty model
+model_null <- lmer(latency ~ 1 + (1 | subject), data = data)
+anova(model_null)
+outliers <- check_model(model_null, data)
+
+# basic model = only with exponent 
+model_basic <- lmer(latency ~ exponent + (1 | subject), data = data)
+anova(model_basic)
+outliers <- check_model(model_basic, data)
+
+# full model = with main covariates
+model_full <- lmer(latency ~ exponent + region + area + (1 | subject), data = data)
+anova(model_full)
+outliers <- check_model(model_full, data)
+
+# interaction model = includes an interaction between exponent and brain region
+model_interaction <- lmer(latency ~ exponent * region + area + (1 | subject), data = data)
+anova(model_interaction)
+anova_table <- anova(model_interaction)
+view(anova_table)
 outliers <- check_model(model_interaction, data)
 
 # compare models
@@ -699,7 +724,7 @@ AIC(model_null, model_basic, model_full, model_interaction)
 # subset the dataset
 data <- data_all %>%
   filter(component == "N2") %>% 
-  select(c('subject', 'age', 'male', 'dominant', 'area', 'region', 'rating', 'rating_norm', 'exponent', 'offset')) 
+  select(c('subject', 'age', 'component', 'dominant', 'area', 'region', 'rating', 'rating_norm', 'exponent', 'offset')) 
 
 # check for multicollinearity predictors --> Variance Inflation Factors (VIF)
 lm_check <- lm(rating ~ exponent + offset + region + area, data = data)
@@ -724,29 +749,50 @@ outliers <- check_model(model_full, data)
 # interaction model = includes an interaction between exponent and brain region
 model_interaction <- lmer(rating ~ exponent * region + area + (1 | subject), data = data)
 anova(model_interaction)
+anova_table <- anova(model_interaction)
+view(anova_table)
 outliers <- check_model(model_interaction, data)
 
 # compare models
 anova(model_null, model_basic, model_full, model_interaction)
 AIC(model_null, model_basic, model_full, model_interaction)
 
-# try computing a separate model for the target region
-model_target <- lmer(rating ~ exponent + area + (1 | subject), data = data %>% filter(region == "target"))
-anova(model_target)
-outliers <- check_model(model_target, data)
+# try computing a separate model for the brain regions
+data_lateral <- data %>% 
+  filter(region == "lateral")
+model_lateral <- lmer(rating ~ exponent + area + (1 | subject), data = data_lateral)
+anova(model_lateral)
+outliers <- check_model(model_lateral, data_lateral)
+
+data_medial <- data %>% 
+  filter(region == "medial")
+model_medial <- lmer(rating ~ exponent + area + (1 | subject), data = data_medial)
+anova(model_medial)
+outliers <- check_model(model_medial, data_medial)
+
+data_visual <- data %>% 
+  filter(region == "visual")
+model_visual <- lmer(rating ~ exponent + area + (1 | subject), data = data_visual)
+anova(model_visual)
+outliers <- check_model(model_visual, data_visual)
 
 # try computing a separate model for the stimulated areas
 data_hand <- data %>% 
   filter(area == "hand")
 model_hand <- lmer(rating ~ exponent*region + (1 | subject), data_hand)
 anova(model_hand)
+anova_table <- anova(model_hand)
+view(anova_table)
 outliers <- check_model(model_hand, data_hand)
 
 data_foot <- data %>% 
   filter(area == "foot")
 model_foot <- lmer(rating ~ exponent*region + (1 | subject), data_foot)
 anova(model_foot)
+anova_table <- anova(model_foot)
+view(anova_table)
 outliers <- check_model(model_foot, data_foot)
+
 ```
 
 ## STATISTICAL ANALYSIS - only hand stimulation
@@ -756,7 +802,7 @@ outliers <- check_model(model_foot, data_foot)
 data <- data_all %>%
   filter(component == "N1") %>% 
   filter(area == "hand") %>% 
-  select(c('subject', 'age', 'male', 'dominant', 'region', 'amplitude', 'exponent', 'offset')) 
+  select(c('subject', 'age', 'component', 'dominant', 'region', 'amplitude', 'exponent', 'offset')) 
 
 # check for multicollinearity predictors --> Variance Inflation Factors (VIF)
 lm_check <- lm(amplitude ~ exponent + offset + region, data = data)
@@ -795,6 +841,8 @@ data <- data %>%
 model_log <- lmer(amplitude_log ~ exponent * region + (1 | subject),
   data = data)
 anova(model_log)
+anova_table <- anova(model_log)
+view(anova_table)
 outliers <- check_model(model_log, data)
 ```
 
@@ -804,7 +852,7 @@ outliers <- check_model(model_log, data)
 data <- data_all %>%
   filter(component == "N1") %>% 
   filter(area == "hand") %>% 
-  select(c('subject', 'age', 'male', 'dominant', 'area', 'region', 'latency', 'exponent', 'offset')) 
+  select(c('subject', 'age', 'component', 'dominant', 'area', 'region', 'latency', 'exponent', 'offset')) 
 
 # check for multicollinearity predictors --> Variance Inflation Factors (VIF)
 lm_check <- lm(latency ~ exponent + offset + region, data = data)
@@ -829,6 +877,8 @@ outliers <- check_model(model_full, data)
 # interaction model = includes an interaction between exponent and brain region
 model_interaction <- lmer(latency ~ exponent * region + (1 | subject), data = data)
 anova(model_interaction)
+anova_table <- anova(model_interaction)
+view(anova_table)
 outliers <- check_model(model_interaction, data)
 
 # compare models
@@ -1086,16 +1136,21 @@ anova(model_null, model_basic, model_full, model_interaction)
 AIC(model_null, model_basic, model_full, model_interaction)
 
 # try computing a separate model for the regions
-data_target <- data %>% 
-  filter(region == "target")
-model_target <- lmer(rating ~ exponent + (1 | subject), data = data_target)
-anova(model_target)
-outliers <- check_model(model_target, data_target)
+data_lateral <- data %>% 
+  filter(region == "lateral")
+model_lateral <- lmer(rating ~ exponent + (1 | subject), data = data_lateral)
+anova(model_lateral)
+outliers <- check_model(model_lateral, data_lateral)
 
-data_ctrl <- data%>% 
-  filter(region == "ctrl")
-model_ctrl <- lmer(rating ~ exponent + (1 | subject), data = data_ctrl)
-anova(model_ctrl)
-outliers <- check_model(model_ctrl, data_ctrl)
+data_medial <- data %>% 
+  filter(region == "medial")
+model_medial <- lmer(rating ~ exponent + (1 | subject), data = data_medial)
+anova(model_medial)
+outliers <- check_model(model_medial, data_medial)
 
+data_visual <- data %>% 
+  filter(region == "visual")
+model_visual <- lmer(rating ~ exponent + (1 | subject), data = data_visual)
+anova(model_visual)
+outliers <- check_model(model_visual, data_visual)
 ```

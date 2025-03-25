@@ -1016,17 +1016,13 @@ clear a b c d s elec atlas cfg sourcemodel_atlas leadfield data header  ...
 %% source-space analysis: extract aperiodic exponent
 % ----- section input -----
 params.foi = [5 80];
-params.roi.FPN = {'7Networks_LH_Cont_PFCl_1', '7Networks_RH_Cont_PFCl_1', '7Networks_RH_Cont_PFCl_2', ...
-    '7Networks_RH_Cont_PFCl_3', '7Networks_RH_Cont_PFCl_4', '7Networks_RH_Cont_PFCmp_1'};
-params.roi.Salience = {'7Networks_LH_SalVentAttn_PFCl_1', '7Networks_LH_SalVentAttn_Med_1', ...
-    '7Networks_LH_SalVentAttn_Med_2', '7Networks_LH_SalVentAttn_Med_3', ...
+params.foi_APC = [30 50];
+params.roi.lateral = {'7Networks_RH_Cont_PFCl_1', '7Networks_RH_Cont_PFCl_3', ...
+    '7Networks_RH_Cont_PFCl_4'};
+params.roi.medial = {'7Networks_LH_SalVentAttn_Med_1', '7Networks_LH_SalVentAttn_Med_2', '7Networks_LH_SalVentAttn_Med_3', ...
     '7Networks_RH_SalVentAttn_Med_1', '7Networks_RH_SalVentAttn_Med_2'};
-params.roi.DMN = {'7Networks_LH_Default_PFC_1', '7Networks_LH_Default_PFC_2', '7Networks_LH_Default_PFC_3', ...
-    '7Networks_LH_Default_PFC_4', '7Networks_LH_Default_PFC_5', '7Networks_LH_Default_PFC_6', '7Networks_LH_Default_PFC_7', ...
-    '7Networks_RH_Default_PFCv_1', '7Networks_RH_Default_PFCv_2', ...
-    '7Networks_RH_Default_PFCdPFCm_1', '7Networks_RH_Default_PFCdPFCm_2', '7Networks_RH_Default_PFCdPFCm_3'};
-params.roi.Visual = {'7Networks_LH_Vis_2', '7Networks_LH_Vis_4', '7Networks_LH_Vis_5', ...
-    '7Networks_RH_Vis_4', '7Networks_RH_Vis_5', '7Networks_RH_Vis_8' };
+params.roi.visual = {'7Networks_LH_Vis_2', '7Networks_LH_Vis_4', '7Networks_LH_Vis_5', ...
+    '7Networks_RH_Vis_4', '7Networks_RH_Vis_5'};
 % -------------------------
 
 % load data if necessary
@@ -1112,29 +1108,246 @@ end
 fprintf('done.\n')
 save('AperiodicPFC_data2.mat', 'AperiodicPFC_data', '-v7.3'); 
 
-% identify target and control regions
+% extract aperiodic measures for all ROIs
+fprintf('extracting aperiodic measures..\n')
+for r = fieldnames(params.roi)'
+    % identify involved sources
+    idx_sources = false(1, length(AperiodicPFC_data(1).PSD_source(1).sources.ROIName));
+    for a = 1:length(AperiodicPFC_data(1).PSD_source(1).sources.ROIName)
+        if any(strcmp(AperiodicPFC_data(1).PSD_source(1).sources.ROIName{a}, params.roi.(r{1})))
+            idx_sources(a) = true;
+        end
+    end
 
-% extract aperiodic measures for ROIs
+    for s = 1:params.subjects
+        for c = 1:2
+            % subset data and average across rois
+            data = AperiodicPFC_data(s).PSD_source(c).fractal(:, idx_sources, :); 
+            data = squeeze(mean(data, 2)); 
+
+            % identify frequencies
+            idx_freq = AperiodicPFC_data(s).PSD_source(c).freq >= params.foi_APC(1) & ...
+                AperiodicPFC_data(s).PSD_source(c).freq <= params.foi_APC(2);
+            freq = AperiodicPFC_data(s).PSD_source(c).freq(idx_freq);
+
+            % perform robust linear regression for all trials
+            output.exponent = []; 
+            output.offset = [];
+            for b = 1:size(data, 1)
+                % subset and log-transform 
+                data_log = log10(data(b, idx_freq));
+                freq_log = log10(freq);
+
+                % fit for target roi
+                [fit, ~] = robustfit(freq_log, data_log);
+                output.exponent(b) = -fit(2);
+                output.offset(b) = fit(1);
+            end
+
+            % encode to the output structure
+            AperiodicPFC_measures(s).APC_source(c).condition = c;
+            AperiodicPFC_measures(s).APC_source(c).flipped = AperiodicPFC_measures(s).APC(c).flipped;
+            AperiodicPFC_measures(s).APC_source(c).trials = AperiodicPFC_data(s).PSD_source(c).trials; 
+            AperiodicPFC_measures(s).APC_source(c).trials_removed = AperiodicPFC_data(s).PSD_source(c).trials_removed;
+            AperiodicPFC_measures(s).APC_source(c).foi = params.foi_APC;
+            AperiodicPFC_measures(s).APC_source(c).sources.(r{1}) = params.roi.(r{1});
+            AperiodicPFC_measures(s).APC_source(c).exponent.(r{1}) = output.exponent;
+            AperiodicPFC_measures(s).APC_source(c).offset.(r{1}) = output.offset;         
+        end
+    end
+end
+fprintf('done.\n')
+save(output_file, 'AperiodicPFC_measures', '-append');
 
 % clean and continue
-clear a c d s idx data cfg data_trial PSD_trial
+clear a b c d r s idx data cfg data_trial PSD idx_sources idx_freq freq data_log freq_log fit output bad_sources bad_numbers
 fprintf('section finished.\n\n')
 
 %% source-space analysis: export for R  
-% ----- section input -----
-% -------------------------
+
+% reload output structures if necessary 
+if exist('AperiodicPFC_data') ~= 1 || exist('AperiodicPFC_measures') ~= 1
+    load(output_file, 'AperiodicPFC_data', 'AperiodicPFC_measures')
+end
+
+% export measured variables in a long-format table
+fprintf('exporting data:\n')
+table_export = table;
+row_counter = 1;
+for s = 1:params.subjects
+    for c = 1:length(AperiodicPFC_measures(s).conditions)
+        % identify trials to be removed (based on trials discarded during source-analysis)
+        trials2remove = AperiodicPFC_measures(s).APC_source(c).trials_removed;  
+
+        % subset the data, filter out removed trials
+        data = struct;
+        data.exponent = AperiodicPFC_measures(s).APC_source(c).exponent;
+        data.offset = AperiodicPFC_measures(s).APC_source(c).offset;
+        for a = params.LEP_comps
+            data.LEP.(a{1}).amplitude = AperiodicPFC_measures(s).LEP(c).(a{1}).amplitude;
+            data.LEP.(a{1}).latency = AperiodicPFC_measures(s).LEP(c).(a{1}).latency;
+            data.LEP.(a{1}).amplitude(trials2remove) = [];
+            data.LEP.(a{1}).latency(trials2remove) = [];
+        end
+        data.rating = AperiodicPFC_measures(s).pain(c).ratings;
+        data.rating(trials2remove) = [];
+        
+        % encode to the table
+        for a = 1:length(data.rating)
+            for b = fieldnames(data.LEP)'
+                for r = fieldnames(data.exponent)'
+                    % subject info
+                    table_export.subject(row_counter) = s;
+                    table_export.ID{row_counter} = AperiodicPFC_measures(s).ID;
+                    table_export.age(row_counter) = AperiodicPFC_measures(s).age;
+                    table_export.male(row_counter) = AperiodicPFC_measures(s).male;
+                    table_export.handedness{row_counter} = AperiodicPFC_measures(s).handedness;
+    
+                    % session info
+                    table_export.condition(row_counter) = c;
+                    table_export.area{row_counter} = AperiodicPFC_measures(s).conditions(c).area;
+                    table_export.side{row_counter} = AperiodicPFC_measures(s).conditions(c).side;
+                    if strcmp(table_export.handedness{row_counter},table_export.side{row_counter})
+                        table_export.dominant(row_counter) = 1;
+                    else
+                        table_export.dominant(row_counter) = 0;
+                    end
+                    table_export.flipped{row_counter} = AperiodicPFC_measures(s).APC_source(c).flipped;
+
+                    % dependent variable: LEP measures
+                    table_export.component{row_counter} = b{1};
+                    table_export.amplitude(row_counter) = data.LEP.(b{1}).amplitude(a);
+                    table_export.latency(row_counter) = data.LEP.(b{1}).latency(a);
+
+                    % dependent variable: pain rating
+                    table_export.rating(row_counter) = data.rating(a);
+    
+                    % independent variable: aperiodic measures
+                    table_export.region{row_counter} = r{1}; 
+                    table_export.exponent(row_counter) = data.exponent.(r{1})(a);
+                    table_export.offset(row_counter) = data.offset.(r{1})(a);  
+    
+                    % update row counter
+                    row_counter = row_counter + 1;
+                end
+            end
+        end
+    end
+end
+
+% save table to output structure and as .csv
+AperiodicPFC_export_sources = table_export;
+save(output_file, 'AperiodicPFC_export_sources', '-append');
+writetable(AperiodicPFC_export_sources, 'AperiodicPFC_export_sources.csv');
+fprintf('done.\n')
 
 % clean and continue
-clear 
+clear a b c r s row_counter table_export trials2remove data
 fprintf('section finished.\n\n')
-
 
 %% source-space analysis: visualization 
 % ----- section input -----
+params.foi_APC = [30 50];
+params.path_headmodel = 'standard_bem.mat';
+params.path_atlas = 'Schaefer2018_100Parcels_7Networks_order_FSLMNI152_1mm.Centroid_RAS.csv';
+params.roi.lateral = {'7Networks_RH_Cont_PFCl_1', '7Networks_RH_Cont_PFCl_3', ...
+    '7Networks_RH_Cont_PFCl_4'};
+params.roi.medial = {'7Networks_LH_SalVentAttn_Med_1', '7Networks_LH_SalVentAttn_Med_2', '7Networks_LH_SalVentAttn_Med_3', ...
+    '7Networks_RH_SalVentAttn_Med_1', '7Networks_RH_SalVentAttn_Med_2'};
+params.roi.visual = {'7Networks_LH_Vis_2', '7Networks_LH_Vis_4', '7Networks_LH_Vis_5', ...
+    '7Networks_RH_Vis_4', '7Networks_RH_Vis_5'};
 % -------------------------
 
+% prepare average PSD  
+data = []; data_counter = 1;
+for s = 1:params.subjects
+    for c = 1:2
+        dataset = squeeze(mean(AperiodicPFC_data(s).PSD_source(c).fractal, 1));  
+        data(data_counter, :, :) = dataset;
+        data_counter = data_counter + 1;
+    end
+end
+data = squeeze(mean(data, 1));
+
+% identify frequencies
+idx_freq = AperiodicPFC_data(1).PSD_source(1).freq >= params.foi_APC(1) & ...
+    AperiodicPFC_data(1).PSD_source(1).freq <= params.foi_APC(2);
+freq = AperiodicPFC_data(1).PSD_source(1).freq(idx_freq);
+
+% calculate average aperiodic exponent for each source
+exponent_avg = [];
+for d = 1:size(data, 1)
+    % subset and log-transform 
+    data_log = log10(data(d, idx_freq));
+    freq_log = log10(freq);
+
+    % fit for target roi
+    [fit, ~] = robustfit(freq_log, data_log);
+    exponent_avg(d) = -fit(2);
+end
+
+% prepare a source model
+addpath(genpath([folder.toolbox '\fieldtrip-20250318']));
+load(sprintf('%s\\dataset_default.lw6', folder.output), '-mat')
+params.labels = {header.chanlocs.labels};
+params.elec_template = ft_read_sens('standard_1005.elc');
+elec = create_elec(params, header);
+load(params.path_headmodel,'vol');
+atlas = readtable(params.path_atlas);
+cfg = [];
+cfg.method = 'basedonpos';
+cfg.sourcemodel.pos = [atlas.R, atlas.A, atlas.S];
+cfg.unit = 'mm';
+cfg.headmodel = params.path_headmodel;
+sourcemodel_atlas = ft_prepare_sourcemodel(cfg);
+sourcemodel_atlas.coordsys = 'mni';
+
+% prepare plotting parameters 
+sources2remove = AperiodicPFC_quality_check(1).bad_sources.number;
+exponent_source = [];
+exponent_source.pos = sourcemodel_atlas.pos;  
+exponent_source.pos(sources2remove, :) = [];
+exponent_source.inside = sourcemodel_atlas.inside;  
+exponent_source.inside(sources2remove) = [];
+exponent_source.pow = nan(size(exponent_source.pos, 1), 1);
+exponent_source.pow(exponent_source.inside) = exponent_avg;
+cfg = [];
+cfg.method = 'surface';
+cfg.funparameter = 'pow';
+cfg.projmethod = 'nearest';
+cfg.surface = 'brain'; 
+cfg.camlight = 'no';
+cfg.camlight = 'no';
+cfg.colorbar = 'yes';
+cfg.funcolorlim = [mean(exponent_avg) - 2*std(exponent_avg), mean(exponent_avg) + 2*std(exponent_avg)];
+
+% add target locations
+params.regions = fieldnames(params.roi)';
+for r = 1:3
+    % identify source locations
+    idx_sources = false(1, length(AperiodicPFC_data(1).PSD_source(1).sources.ROIName));
+    for a = 1:length(AperiodicPFC_data(1).PSD_source(1).sources.ROIName)
+        if any(strcmp(AperiodicPFC_data(1).PSD_source(1).sources.ROIName{a}, params.roi.(params.regions{r})))
+            idx_sources(a) = true;
+        end
+    end
+    centroids = table2array(AperiodicPFC_data(1).PSD_source(1).sources(idx_sources, [3:5]));  
+
+    % plot average exponent value over all cortical sources
+    ft_sourceplot(cfg, exponent_source);
+    colormap(cool)
+    alpha(0.4)
+    hold on
+    
+    % add centroids to target locations
+    scatter3(centroids(:,1), centroids(:,2), centroids(:,3), 75, 'k', 'filled');
+    hold off
+    title(sprintf('average aperiodic exponent values - %s areas', params.regions{r}))
+end
+
 % clean and continue
-clear 
+clear s c data dataset idx_freq freq data_log freq_log vol elec header ...
+    atlas sourcemodel_atlas cfg exponent_source
 fprintf('section finished.\n\n')
 
 %% functions
