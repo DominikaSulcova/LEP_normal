@@ -1106,7 +1106,7 @@ for a = 1:length(AperiodicPFC_sources)
     end
 end
 fprintf('done.\n')
-save('AperiodicPFC_data2.mat', 'AperiodicPFC_data', '-v7.3'); 
+save(output_file, 'AperiodicPFC_data', '-append'); 
 
 % extract aperiodic measures for all ROIs
 fprintf('extracting aperiodic measures..\n')
@@ -1258,6 +1258,12 @@ params.roi.visual = {'7Networks_LH_Vis_2', '7Networks_LH_Vis_4', '7Networks_LH_V
     '7Networks_RH_Vis_4', '7Networks_RH_Vis_5'};
 % -------------------------
 
+% reload output structures if necessary 
+if exist('AperiodicPFC_data') ~= 1 || exist('AperiodicPFC_measures') ~= 1
+    load(output_file, 'AperiodicPFC_measures', 'AperiodicPFC_quality_check')
+    load('AperiodicPFC_data2.mat')
+end
+
 % prepare average PSD  
 data = []; data_counter = 1;
 for s = 1:params.subjects
@@ -1286,13 +1292,7 @@ for d = 1:size(data, 1)
     exponent_avg(d) = -fit(2);
 end
 
-% prepare a source model
-addpath(genpath([folder.toolbox '\fieldtrip-20250318']));
-load(sprintf('%s\\dataset_default.lw6', folder.output), '-mat')
-params.labels = {header.chanlocs.labels};
-params.elec_template = ft_read_sens('standard_1005.elc');
-elec = create_elec(params, header);
-load(params.path_headmodel,'vol');
+% create the source model
 atlas = readtable(params.path_atlas);
 cfg = [];
 cfg.method = 'basedonpos';
@@ -1302,7 +1302,7 @@ cfg.headmodel = params.path_headmodel;
 sourcemodel_atlas = ft_prepare_sourcemodel(cfg);
 sourcemodel_atlas.coordsys = 'mni';
 
-% prepare plotting parameters 
+% plot average exponent values on the surface
 sources2remove = AperiodicPFC_quality_check(1).bad_sources.number;
 exponent_source = [];
 exponent_source.pos = sourcemodel_atlas.pos;  
@@ -1320,6 +1320,12 @@ cfg.camlight = 'no';
 cfg.camlight = 'no';
 cfg.colorbar = 'yes';
 cfg.funcolorlim = [mean(exponent_avg) - 2*std(exponent_avg), mean(exponent_avg) + 2*std(exponent_avg)];
+h = ft_sourceplot(cfg, exponent_source);
+colormap(cool)
+
+set(surface, 'FaceAlpha', 0.75); 
+
+
 
 % add target locations
 params.regions = fieldnames(params.roi)';
@@ -1346,10 +1352,77 @@ for r = 1:3
 end
 
 % clean and continue
-clear s c data dataset idx_freq freq data_log freq_log vol elec header ...
-    atlas sourcemodel_atlas cfg exponent_source
+clear c d h i s data dataset idx_freq freq data_log freq_log vol header ...
+    atlas atlas_centroid sourcemodel cfg exponent_source sources2remove surface
 fprintf('section finished.\n\n')
 
+%%
+% prepare volumetric and centroid data
+addpath(genpath([folder.toolbox '\fieldtrip-20250318']));
+headmodel = ft_read_headmodel(params.path_headmodel);
+surface = headmodel.bnd(3);
+atlas = ft_read_atlas('Schaefer2018_100Parcels_7Networks_order_FSLMNI152_1mm.nii');
+atlas.coordsys = 'mni'; 
+atlas_centroid = readtable(params.path_atlas);
+atlas.sourcemodel.pos = [atlas_centroid.R, atlas_centroid.A, atlas_centroid.S]; 
+
+% check that atlas labels match, re-label
+cfg = [];
+cfg.roi = atlas.sourcemodel.pos;  
+cfg.atlas = atlas;
+cfg.inputcoord = 'mni';
+cfg.output = 'label'; 
+labels = ft_volumelookup(cfg, atlas);
+for a = 1:height(atlas_centroid)
+    if contains(labels.name{a}, num2str(a))
+        atlas.tissuelabel{a} = atlas_centroid.ROIName{a};
+    end
+end
+
+% prepare labels on surface
+labels = zeros(size(surface.pos, 1), 1);
+for v = 1:size(surface.pos, 1)
+    % extract MNI coordinates for this voxel
+    mni_coord = surface.pos(v, :); 
+
+    % find corresponding voxel index in the atlas volume - homogeneous transform
+    voxel_coord = round(inv(atlas.transform) * [mni_coord 1]'); 
+    x = voxel_coord(1);
+    y = voxel_coord(2);
+    z = voxel_coord(3);
+
+    % encode if inside of the volume
+    if x >= 1 && x <= size(atlas.tissue, 1) && ...
+       y >= 1 && y <= size(atlas.tissue, 2) && ...
+       z >= 1 && z <= size(atlas.tissue, 3)
+        labels(v) = atlas.tissue(x, y, z);
+    end
+end
+
+% plot atlas to the cortical surface
+cfg = [];
+cfg.method = 'surface';
+cfg.funparameter = 'tissue';
+cfg.surface = 'brain';       
+cfg.projmethod = 'nearest';
+ft_sourceplot(cfg, atlas);
+
+cfg = [];
+cfg.method = 'slice';
+cfg.funparameter = 'tissue';
+ft_sourceplot(cfg, atlas_interp);
+
+% identify vertices for individual areas
+roi_indices = zeros(length(atlas.tissuelabel), length(sourcemodel.pos));
+for i = 1:length(atlas.tissuelabel)
+    cfg = [];
+    cfg.atlas = atlas;
+    cfg.roi = atlas.tissuelabel{i};  
+    cfg.inputcoord = 'mni';
+    cfg.output = 'index';
+    mask = ft_volumelookup(cfg, atlas);
+    roi_indices(i, :) = mask;  
+end
 %% functions
 function export_EEGLAB(lwdata, filename, subj)
 % =========================================================================
