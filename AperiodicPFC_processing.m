@@ -1250,12 +1250,7 @@ fprintf('section finished.\n\n')
 params.foi_APC = [30 50];
 params.path_headmodel = 'standard_bem.mat';
 params.path_atlas = 'Schaefer2018_100Parcels_7Networks_order_FSLMNI152_1mm.Centroid_RAS.csv';
-params.roi.lateral = {'7Networks_RH_Cont_PFCl_1', '7Networks_RH_Cont_PFCl_3', ...
-    '7Networks_RH_Cont_PFCl_4'};
-params.roi.medial = {'7Networks_LH_SalVentAttn_Med_1', '7Networks_LH_SalVentAttn_Med_2', '7Networks_LH_SalVentAttn_Med_3', ...
-    '7Networks_RH_SalVentAttn_Med_1', '7Networks_RH_SalVentAttn_Med_2'};
-params.roi.visual = {'7Networks_LH_Vis_2', '7Networks_LH_Vis_4', '7Networks_LH_Vis_5', ...
-    '7Networks_RH_Vis_4', '7Networks_RH_Vis_5'};
+params.roi = {'PFC', 'Vis'};
 % -------------------------
 
 % reload output structures if necessary 
@@ -1293,6 +1288,7 @@ for d = 1:size(data, 1)
 end
 
 % create the source model
+addpath(genpath([folder.toolbox '\FieldTrip']));
 atlas = readtable(params.path_atlas);
 cfg = [];
 cfg.method = 'basedonpos';
@@ -1302,58 +1298,108 @@ cfg.headmodel = params.path_headmodel;
 sourcemodel_atlas = ft_prepare_sourcemodel(cfg);
 sourcemodel_atlas.coordsys = 'mni';
 
-% plot average exponent values on the surface
+% plot the brain surface with source centroid locations  
 sources2remove = AperiodicPFC_quality_check(1).bad_sources.number;
-exponent_source = [];
-exponent_source.pos = sourcemodel_atlas.pos;  
-exponent_source.pos(sources2remove, :) = [];
-exponent_source.inside = sourcemodel_atlas.inside;  
-exponent_source.inside(sources2remove) = [];
-exponent_source.pow = nan(size(exponent_source.pos, 1), 1);
-exponent_source.pow(exponent_source.inside) = exponent_avg;
+dummy_source = [];
+dummy_source.pos = sourcemodel_atlas.pos;  
+dummy_source.pos(sources2remove, :) = [];
+dummy_source.inside = sourcemodel_atlas.inside;  
+dummy_source.inside(sources2remove) = [];
+dummy_source.pow = ones(size(dummy_source.pos, 1), 1)';
 cfg = [];
 cfg.method = 'surface';
 cfg.funparameter = 'pow';
 cfg.projmethod = 'nearest';
-cfg.surface = 'brain'; 
-cfg.camlight = 'no';
-cfg.camlight = 'no';
+cfg.colorbar = 'no';
+h_brain = ft_sourceplot(cfg, dummy_source);
+h_patch = findobj(gca, 'Type', 'patch'); % adjust surface parameters
+set(h_patch, ...
+    'FaceColor', [0.9 0.75 0.75], ...  
+    'EdgeColor', 'none', ...
+    'FaceAlpha', 0.25);
+material dull;
+lighting phong;
+axis off equal;
+hold on
+centroids = table2array(AperiodicPFC_data(1).PSD_source(1).sources(:, [3:5]));  % identify centroid locations
+h_scater = scatter3(centroids(:,1), centroids(:,2), centroids(:,3), 75, 'k', 'filled'); 
+hold off
+title('Schaefer atlas - source locations')
+saveas(gcf, sprintf('%s\\figures\\sources_locations.png', folder.output))
+
+% plot the brain surface with sources coloured by average aperiodic exponent
 cfg.colorbar = 'yes';
-cfg.funcolorlim = [mean(exponent_avg) - 2*std(exponent_avg), mean(exponent_avg) + 2*std(exponent_avg)];
-h = ft_sourceplot(cfg, exponent_source);
-colormap(cool)
+h_brain = ft_sourceplot(cfg, dummy_source);
+h_patch = findobj(gca, 'Type', 'patch');
+set(h_patch, ...
+    'FaceColor', [0.9 0.75 0.75], ...  
+    'EdgeColor', 'none', ...
+    'FaceAlpha', 0.15);
+material dull;
+lighting phong;
+axis off equal;
+hold on
+exponent_norm = (exponent_avg - min(exponent_avg)) / (max(exponent_avg) - min(exponent_avg)); % normalize for color sampling
+cmap = flipud(hot(256));
+color_idx = round(1 + exponent_norm * (size(cmap,1) - 1)); % sample colors from the colormap
+colors = cmap(color_idx, :);
+h_scater = scatter3(centroids(:,1), centroids(:,2), centroids(:,3), 75, colors, 'filled'); 
+colormap(cmap);
+cb = colorbar;
+set(cb, 'Ticks', linspace(0,1,6), ...
+        'TickLabels', round(linspace(min(exponent_avg), max(exponent_avg), 6), 2));
+ylabel(cb, 'Aperiodic exponent');
+cb_pos = get(cb, 'Position');
+cb_pos(3) = 0.025;   
+cb_pos(2) = cb_pos(2) + 0.15;  
+cb_pos(4) = cb_pos(4) * 0.6;   
+set(cb, 'Position', cb_pos);
+hold off
+title('average values of β')
+saveas(gcf, sprintf('%s\\figures\\sources_exponent.png', folder.output))
 
-set(surface, 'FaceAlpha', 0.75); 
-
-
-
-% add target locations
-params.regions = fieldnames(params.roi)';
-for r = 1:3
-    % identify source locations
-    idx_sources = false(1, length(AperiodicPFC_data(1).PSD_source(1).sources.ROIName));
-    for a = 1:length(AperiodicPFC_data(1).PSD_source(1).sources.ROIName)
-        if any(strcmp(AperiodicPFC_data(1).PSD_source(1).sources.ROIName{a}, params.roi.(params.regions{r})))
-            idx_sources(a) = true;
+% identify altarget brain regions
+source_labels = table2array(atlas(:, 2))';
+source_labels(sources2remove) = [];
+for a = 1:length(params.roi)
+    idx_source.(params.roi{a}) = false(1, length(source_labels));
+    for b = 1:length(source_labels)
+        if contains(source_labels{b}, params.roi{a})
+            idx_source.(params.roi{a})(b) = true;
         end
     end
-    centroids = table2array(AperiodicPFC_data(1).PSD_source(1).sources(idx_sources, [3:5]));  
+    fprintf('--> %d areas found for the %s network.\n', sum(idx_source.(params.roi{a})), params.roi{a})
+end
 
-    % plot average exponent value over all cortical sources
-    ft_sourceplot(cfg, exponent_source);
-    colormap(cool)
-    alpha(0.4)
-    hold on
-    
-    % add centroids to target locations
-    scatter3(centroids(:,1), centroids(:,2), centroids(:,3), 75, 'k', 'filled');
-    hold off
-    title(sprintf('average aperiodic exponent values - %s areas', params.regions{r}))
+% plot brain regions to the brain surface
+roi_source = dummy_source;
+cmap_roi = [0.9 0.75 0.75;
+    1.0000    0.0745    0.6510;
+    00.3020    0.7451    0.9333];
+for a = 1:length(params.roi)
+    roi_source.pow(idx_source.(params.roi{a})) = 1 + a;
+end
+cfg = [];
+cfg.method = 'surface';
+cfg.funparameter = 'pow';
+cfg.projmethod = 'nearest';
+cfg.colorbar = 'no';
+views = [0, 90; 180, 0; 0, 0; 90 0; -90, 0];
+titles = {'top', 'front', 'back', 'right', 'left'};
+for b = 1:length(views)
+    h_roi = ft_sourceplot(cfg, roi_source);
+    colormap(cmap_roi)
+    view(views(b, :));
+    lighting gouraud;
+    camlight('headlight');
+    material dull;
+    axis off equal;
+    saveas(gcf, sprintf('%s\\figures\\sources_roi_%s.png', folder.output, titles{b}))
 end
 
 % clean and continue
-clear c d h i s data dataset idx_freq freq data_log freq_log vol header ...
-    atlas atlas_centroid sourcemodel cfg exponent_source sources2remove surface
+clear a b c d i s data dataset idx_freq freq data_log freq_log vol header ...
+    atlas atlas_centroid sourcemodel cfg dummy_source sources2remove surface
 fprintf('section finished.\n\n')
 
 %%
