@@ -198,7 +198,8 @@ summary(data_all)
 # clean and prepare complete dataset
 data_all <- data_all %>%
   mutate(across(where(~!is.numeric(.)), as.factor)) %>% 
-  filter(latency > 0) 
+  filter(latency > 0) %>% 
+  mutate(region = if_else(region == "Vis", "Visual", region))
 data_all <- data_all %>%
   group_by(subject) %>%
   mutate(
@@ -376,7 +377,7 @@ rm(areas, variables, ar, var, data_ratings, output)
 ```{r}
 # define variables
 areas <- c('hand', 'foot')
-regions <- c('lateral', 'medial', 'visual')
+regions <- c('PFC', 'Visual')
 variables <- c('exponent', 'offset')
 
 # prepare outcome df
@@ -758,17 +759,11 @@ anova(model_null, model_basic, model_full, model_interaction)
 AIC(model_null, model_basic, model_full, model_interaction)
 
 # try computing a separate model for the brain regions
-data_lateral <- data %>% 
-  filter(region == "lateral")
-model_lateral <- lmer(rating ~ exponent + area + (1 | subject), data = data_lateral)
-anova(model_lateral)
-outliers <- check_model(model_lateral, data_lateral)
-
-data_medial <- data %>% 
-  filter(region == "medial")
-model_medial <- lmer(rating ~ exponent + area + (1 | subject), data = data_medial)
-anova(model_medial)
-outliers <- check_model(model_medial, data_medial)
+data_PFC <- data %>% 
+  filter(region == "PFC")
+model_PFC <- lmer(rating ~ exponent + area + (1 | subject), data = data_PFC)
+anova(model_PFC)
+outliers <- check_model(model_PFC, data_PFC)
 
 data_visual <- data %>% 
   filter(region == "visual")

@@ -1017,12 +1017,8 @@ clear a b c d s elec atlas cfg sourcemodel_atlas leadfield data header  ...
 % ----- section input -----
 params.foi = [5 80];
 params.foi_APC = [30 50];
-params.roi.lateral = {'7Networks_RH_Cont_PFCl_1', '7Networks_RH_Cont_PFCl_3', ...
-    '7Networks_RH_Cont_PFCl_4'};
-params.roi.medial = {'7Networks_LH_SalVentAttn_Med_1', '7Networks_LH_SalVentAttn_Med_2', '7Networks_LH_SalVentAttn_Med_3', ...
-    '7Networks_RH_SalVentAttn_Med_1', '7Networks_RH_SalVentAttn_Med_2'};
-params.roi.visual = {'7Networks_LH_Vis_2', '7Networks_LH_Vis_4', '7Networks_LH_Vis_5', ...
-    '7Networks_RH_Vis_4', '7Networks_RH_Vis_5'};
+params.roi = {'PFC', 'Vis'};
+params.path_atlas = 'Schaefer2018_100Parcels_7Networks_order_FSLMNI152_1mm.Centroid_RAS.csv';
 % -------------------------
 
 % load data if necessary
@@ -1108,21 +1104,29 @@ end
 fprintf('done.\n')
 save(output_file, 'AperiodicPFC_data', '-append'); 
 
-% extract aperiodic measures for all ROIs
-fprintf('extracting aperiodic measures..\n')
-for r = fieldnames(params.roi)'
-    % identify involved sources
-    idx_sources = false(1, length(AperiodicPFC_data(1).PSD_source(1).sources.ROIName));
-    for a = 1:length(AperiodicPFC_data(1).PSD_source(1).sources.ROIName)
-        if any(strcmp(AperiodicPFC_data(1).PSD_source(1).sources.ROIName{a}, params.roi.(r{1})))
-            idx_sources(a) = true;
+% identify target and control sources
+fprintf('selecting ROIs...\n')
+sources2remove = AperiodicPFC_quality_check(1).bad_sources.number;
+atlas = readtable(params.path_atlas);
+source_labels = table2array(atlas(:, 2))';
+source_labels(sources2remove) = [];
+for a = 1:length(params.roi)
+    idx_source.(params.roi{a}) = false(1, length(source_labels));
+    for b = 1:length(source_labels)
+        if contains(source_labels{b}, params.roi{a})
+            idx_source.(params.roi{a})(b) = true;
         end
     end
+    fprintf('--> %d areas found for the %s network.\n', sum(idx_source.(params.roi{a})), params.roi{a})
+end
 
+% extract aperiodic measures for all ROIs
+fprintf('extracting aperiodic measures..\n')
+for r = 1:length(params.roi)
     for s = 1:params.subjects
         for c = 1:2
             % subset data and average across rois
-            data = AperiodicPFC_data(s).PSD_source(c).fractal(:, idx_sources, :); 
+            data = AperiodicPFC_data(s).PSD_source(c).fractal(:, idx_source.(params.roi{r}), :); 
             data = squeeze(mean(data, 2)); 
 
             % identify frequencies
@@ -1150,9 +1154,9 @@ for r = fieldnames(params.roi)'
             AperiodicPFC_measures(s).APC_source(c).trials = AperiodicPFC_data(s).PSD_source(c).trials; 
             AperiodicPFC_measures(s).APC_source(c).trials_removed = AperiodicPFC_data(s).PSD_source(c).trials_removed;
             AperiodicPFC_measures(s).APC_source(c).foi = params.foi_APC;
-            AperiodicPFC_measures(s).APC_source(c).sources.(r{1}) = params.roi.(r{1});
-            AperiodicPFC_measures(s).APC_source(c).exponent.(r{1}) = output.exponent;
-            AperiodicPFC_measures(s).APC_source(c).offset.(r{1}) = output.offset;         
+            AperiodicPFC_measures(s).APC_source(c).sources.(params.roi{r}) = source_labels(idx_source.(params.roi{r}));
+            AperiodicPFC_measures(s).APC_source(c).exponent.(params.roi{r}) = output.exponent;
+            AperiodicPFC_measures(s).APC_source(c).offset.(params.roi{r}) = output.offset;         
         end
     end
 end
@@ -1160,11 +1164,11 @@ fprintf('done.\n')
 save(output_file, 'AperiodicPFC_measures', '-append');
 
 % clean and continue
-clear a b c d r s idx data cfg data_trial PSD idx_sources idx_freq freq data_log freq_log fit output bad_sources bad_numbers
+clear a b c d r s idx data cfg data_trial PSD idx_freq freq data_log freq_log fit output ...
+    sources2remove atlas source_labels idx_source bad_sources bad_numbers
 fprintf('section finished.\n\n')
 
 %% source-space analysis: export for R  
-
 % reload output structures if necessary 
 if exist('AperiodicPFC_data') ~= 1 || exist('AperiodicPFC_measures') ~= 1
     load(output_file, 'AperiodicPFC_data', 'AperiodicPFC_measures')
@@ -1213,6 +1217,7 @@ for s = 1:params.subjects
                         table_export.dominant(row_counter) = 0;
                     end
                     table_export.flipped{row_counter} = AperiodicPFC_measures(s).APC_source(c).flipped;
+                    table_export.trial(row_counter) = a;
 
                     % dependent variable: LEP measures
                     table_export.component{row_counter} = b{1};
