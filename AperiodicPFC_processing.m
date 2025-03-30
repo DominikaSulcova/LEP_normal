@@ -542,17 +542,203 @@ fprintf('section finished.\n\n')
 
 %% sensor-space analysis: visualization 
 % ----- section input -----
-params.plot_foi = 'high';
-params.region = {'target' 'ctrl'};
+params.signal = 'CWT_filtered';  
+params.dataset = {'N1', 'N2P2'};  
 % -------------------------
-% grand average LEPs
-%   - import LEP data
-%   - C3 and C4 together --> flip?
-%   - plot a figure with hand and foot together
-% topographical distribution of aperiodic exponent 
+
+% load and subset subject-average LEP data
+load(input_file, 'NLEP_data', 'NLEP_data_1to35')
+data2exclude = readtable('AperiodicPFC_data2exclude.csv');
+data = [];
+data.N1.hand = []; data.N1.foot = [];
+data.N2P2.hand = []; data.N2P2.foot = [];
+for s = 1:params.subjects
+    for d = 1:length(params.dataset)
+        for c = 1:2
+            % choose input dataset
+            if s <= 35
+                data_in = NLEP_data_1to35;                 
+            else
+                data_in = NLEP_data;   
+            end
+
+            % verify area
+            if contains(data_in.LEP(s).conditions{c}, 'hand')  
+                area = 'hand';
+            elseif contains(data_in.LEP(s).conditions{c}, 'foot')  
+                area = 'foot';
+            end
+
+            % check if dataset should be included
+            include = true;
+            for b = 1:height(data2exclude)
+                if data2exclude.subject(b) == s && strcmp(data2exclude.area{b}, area)
+                    if strcmp(data2exclude.component{b}, 'all') || strcmp(data2exclude.component{b}, params.dataset{d})
+                        include = false;
+                    end
+                end
+            end
+
+            % append the data if included
+            if include
+                data.(params.dataset{d}).(area)(end + 1, :) = data_in.LEP(s).(params.signal).(params.dataset{d}).average_cond(c).mean; 
+            end
+        end
+    end
+end
+
+% calculate group average values
+t_value = tinv(0.975, size(data.N1.hand, 1) - 1); 
+data_avg = [];
+for d = 1:length(params.dataset)
+    for a = 1:length(params.area)
+        data_avg.(params.dataset{d}).(params.area{a}).mean = mean(data.(params.dataset{d}).(params.area{a}), 1);
+        data_avg.(params.dataset{d}).(params.area{a}).std = std(data.(params.dataset{d}).(params.area{a}), 0, 1);
+        data_avg.(params.dataset{d}).(params.area{a}).sem = data_avg.(params.dataset{d}).(params.area{a}).std / ...
+            sqrt(size(data.(params.dataset{d}).(params.area{a}), 1)); 
+        data_avg.(params.dataset{d}).(params.area{a}).CI_upper = data_avg.(params.dataset{d}).(params.area{a}).mean + ...
+            t_value * data_avg.(params.dataset{d}).(params.area{a}).sem; 
+        data_avg.(params.dataset{d}).(params.area{a}).CI_lower = data_avg.(params.dataset{d}).(params.area{a}).mean - ...
+            t_value * data_avg.(params.dataset{d}).(params.area{a}).sem; 
+    end
+end
+
+% define common visuals parameters
+load('dataset_default.lw6', '-mat')
+visual.x = (0:header.datasize(6)-1)*header.xstep + header.xstart;
+visual.labels = params.area;
+visual.chanlocs = header.chanlocs;
+visual.chanlabels = {header.chanlocs.labels};
+visual.colors = [0.9294    0.2118    0.1020;
+        0.4745    0.3176    0.9098];
+screen_size = get(0, 'ScreenSize');
+
+% plot LEPs separately for individual datasets
+for d = 1:length(params.dataset)     
+    % select data
+    for a = 1:length(params.area)
+        visual.data(a, :) = data_avg.(params.dataset{d}).(params.area{a}).mean;
+        visual.CI_upper(a, :) = data_avg.(params.dataset{d}).(params.area{a}).CI_upper;
+        visual.CI_lower(a, :) = data_avg.(params.dataset{d}).(params.area{a}).CI_lower;
+    end
+    
+    % launch the figure
+    fig = figure(figure_counter);    
+    set(fig, 'Position', [screen_size(3)/4, screen_size(4)/4, 2*screen_size(3)/5, screen_size(4) / 2])
+    
+    % plot
+    plot_ERP(visual, 'colours', visual.colors, 'labels', visual.labels, 'xlim', [-0.1 0.6], 'reverse', 'on')
+    title(sprintf('LEP - %s component', params.dataset{d}))
+    
+    % save figure and update counter
+    saveas(fig, sprintf('%s\\figures\\LEP_avg_%s.svg', folder.output, params.dataset{d}))
+    figure_counter = figure_counter + 1;
+end
+
+% compute average LEP latencies 
+if exist('AperiodicPFC_measures') ~= 1
+    load(output_file, 'AperiodicPFC_measures')
+end
+data = struct;
+data.N1.hand = []; data.N1.foot = [];
+data.N2.hand = []; data.N2.foot = [];
+data.P2.hand = []; data.P2.foot = [];
+for s = 1:params.subjects
+    for d = 1:length(params.LEP_comps)
+        for c = 1:2
+            % verify area
+            if contains(AperiodicPFC_measures(s).conditions(c).area, 'hand')  
+                area = 'hand';
+            elseif contains(AperiodicPFC_measures(s).conditions(c).area, 'foot')  
+                area = 'foot';
+            end
+
+            % check if dataset should be included
+            include = true;
+            for b = 1:height(data2exclude)
+                if data2exclude.subject(b) == s && strcmp(data2exclude.area{b}, area)
+                    if strcmp(data2exclude.component{b}, 'all') || strcmp(data2exclude.component{b}, params.LEP_comps{d})
+                        include = false;
+                    end
+                end
+            end
+
+            % append the data if included
+            if include
+                data.(params.LEP_comps{d}).(area)(end + 1) = mean(AperiodicPFC_measures(s).LEP(c).(params.LEP_comps{d}).latency); 
+            end
+        end
+    end
+end
+latency_avg = [];
+for d = 1:length(params.LEP_comps)
+    for a = 1:length(params.area)
+        latency_avg.(params.LEP_comps{d}).(params.area{a}) = mean(data.(params.LEP_comps{d}).(params.area{a}));
+    end
+end
+
+% plot peak topographies
+% --> needs extraction from full datasets: 
+        % load data, flip if stimulated on the left hand
+        % cycle through stimulated areas and component, plot peak latency topographies 
+
+% load single-subject hand data
+data = struct;
+s = 1;
+for d = 1:length(params.dataset)
+    for c = 1:2
+        % choose input dataset
+        if s <= 35
+            data_in = NLEP_data_1to35;                 
+        else
+            data_in = NLEP_data;   
+        end
+
+        % proceed if hand was stimulated 
+        if contains(data_in.LEP(s).conditions{c}, 'hand')  
+
+            % check if dataset should be included
+            include = true;
+            for b = 1:height(data2exclude)
+                if data2exclude.subject(b) == s && strcmp(data2exclude.area{b}, area)
+                    if strcmp(data2exclude.component{b}, 'all') || strcmp(data2exclude.component{b}, params.dataset{d})
+                        include = false;
+                    end
+                end
+            end
+
+            % if included, select the data and break the loop
+            if include
+                statement = sprintf(['data.(params.dataset{d}) = ' ...
+                    'data_in.LEP(s).(params.signal).(params.dataset{d}).cond%d;'], c);
+                eval(statement)
+                continue
+            end
+        end
+    end
+end
+        
+% plot single-subject single-trial fitting example
+for d = 1:length(params.dataset)
+    % select data
+    visual.data = data.(params.dataset{d});
+    
+    % launch the figure
+    fig = figure(figure_counter);    
+    set(fig, 'Position', [screen_size(3)/4, screen_size(4)/4, 2*screen_size(3)/5, screen_size(4) / 2])
+    
+    % plot
+    plot_ERP(visual, 'xlim', [-0.1 0.6], 'reverse', 'on', 'shading', 'off', 'legend', 'off')
+    title(sprintf('LEP - %s single trials', params.dataset{d}))
+    
+    % save figure and update counter
+    saveas(fig, sprintf('%s\\figures\\LEP_ST_%s.svg', folder.output, params.dataset{d}))
+    figure_counter = figure_counter + 1;
+end
 
 % clean and continue
-clear 
+clear a b c d s NLEP_data NLEP_data_1to35 data_in data area t_value data_avg header ...
+    visual data2exclude include statement fig screen_size latency_avg 
 fprintf('section finished.\n\n')
 
 %% source-space analysis: import pre-processed data
@@ -1013,7 +1199,7 @@ clear a b c d s elec atlas cfg sourcemodel_atlas leadfield data header  ...
     variance var_threshold flagged_trial flagged_trial_num source_stats
  fprintf('section finished.\n\n')
 
-%% source-space analysis: extract aperiodic exponent
+%% source-space analysis: extract aperiodic exponent from ROIs
 % ----- section input -----
 params.foi = [5 80];
 params.foi_APC = [30 50];
@@ -1038,7 +1224,7 @@ end
 % calculate PSD for all datasets/trials/sources
 addpath(genpath([folder.toolbox '\FieldTrip']));
 fprintf('computing single-trial PSD...\n')
-for a = 1:length(AperiodicPFC_sources)
+for a = 11:length(AperiodicPFC_sources)
     % select data, remove bad sources and trials 
     data = AperiodicPFC_sources(a).data;  
     s = AperiodicPFC_sources(a).subject;
@@ -1102,7 +1288,7 @@ for a = 1:length(AperiodicPFC_sources)
     end
 end
 fprintf('done.\n')
-save(output_file, 'AperiodicPFC_data', '-append'); 
+save('AperiodicPFC_data_new.mat', 'AperiodicPFC_data', '-v7.3'); 
 
 % identify target and control sources
 fprintf('selecting ROIs...\n')
@@ -1162,17 +1348,6 @@ for r = 1:length(params.roi)
 end
 fprintf('done.\n')
 save(output_file, 'AperiodicPFC_measures', '-append');
-
-% clean and continue
-clear a b c d r s idx data cfg data_trial PSD idx_freq freq data_log freq_log fit output ...
-    sources2remove atlas source_labels idx_source bad_sources bad_numbers
-fprintf('section finished.\n\n')
-
-%% source-space analysis: export for R  
-% reload output structures if necessary 
-if exist('AperiodicPFC_data') ~= 1 || exist('AperiodicPFC_measures') ~= 1
-    load(output_file, 'AperiodicPFC_data', 'AperiodicPFC_measures')
-end
 
 % export measured variables in a long-format table
 fprintf('exporting data:\n')
@@ -1247,7 +1422,344 @@ writetable(AperiodicPFC_export_sources, 'AperiodicPFC_export_sources.csv');
 fprintf('done.\n')
 
 % clean and continue
-clear a b c r s row_counter table_export trials2remove data
+clear a b c d r s idx data cfg data_trial PSD idx_freq freq data_log freq_log fit output ...
+    sources2remove atlas source_labels idx_source bad_sources bad_numbers ...
+    row_counter table_export trials2remove 
+fprintf('section finished.\n\n')
+
+%% source-space analysis: extract aperiodic exponent from all sources separately
+% ----- section input -----
+params.foi = [5 80];
+params.foi_APC = [30 50];
+params.path_atlas = 'Schaefer2018_100Parcels_7Networks_order_FSLMNI152_1mm.Centroid_RAS.csv';
+% -------------------------
+
+% load data if necessary
+if exist('AperiodicPFC_sources') ~= 1 
+    load('AperiodicPFC_sources.mat')
+end
+if exist('AperiodicPFC_quality_check') ~= 1
+    load(output_file, 'AperiodicPFC_quality_check')
+end
+if exist('AperiodicPFC_measures') ~= 1
+    load(output_file, 'AperiodicPFC_measures')
+end
+if exist('AperiodicPFC_data') ~= 1
+    load('AperiodicPFC_data_final.mat')
+end
+
+% identify source labels
+sources2remove = AperiodicPFC_quality_check(1).bad_sources.number;
+atlas = readtable(params.path_atlas);
+source_labels = table2array(atlas(:, 2))';
+source_labels(sources2remove) = [];
+for a = 1:length(source_labels)
+    source_labels{a} = erase(source_labels{a}, '7Networks_');
+end
+
+% extract aperiodic measures from all sources
+fprintf('extracting aperiodic measures..\n')
+for s = 1:params.subjects
+    for c = 1:2
+        % subset data and average across rois
+        data = AperiodicPFC_data(s).PSD_source(c).fractal(:, :, :); 
+
+        % identify frequencies
+        idx_freq = AperiodicPFC_data(s).PSD_source(c).freq >= params.foi_APC(1) & ...
+            AperiodicPFC_data(s).PSD_source(c).freq <= params.foi_APC(2);
+        freq = AperiodicPFC_data(s).PSD_source(c).freq(idx_freq);
+
+        % perform robust linear regression for all trials and sources
+        output.exponent = []; 
+        output.offset = [];
+        for a = 1:size(data, 1)
+            for b = 1:size(data, 2)
+                % subset and log-transform 
+                data_log = log10(squeeze(data(a, b, idx_freq))');
+                freq_log = log10(freq);
+
+                % fit for target roi
+                [fit, ~] = robustfit(freq_log, data_log);
+                output.exponent(a, b) = -fit(2);
+                output.offset(a, b) = fit(1);
+            end
+        end
+
+        % encode to the output structure
+        AperiodicPFC_measures(s).APC_source_all(c).condition = c;
+        AperiodicPFC_measures(s).APC_source_all(c).flipped = AperiodicPFC_measures(s).APC(c).flipped;
+        AperiodicPFC_measures(s).APC_source_all(c).trials = AperiodicPFC_data(s).PSD_source(c).trials; 
+        AperiodicPFC_measures(s).APC_source_all(c).trials_removed = AperiodicPFC_data(s).PSD_source(c).trials_removed;
+        AperiodicPFC_measures(s).APC_source_all(c).foi = params.foi_APC;
+        AperiodicPFC_measures(s).APC_source_all(c).sources = source_labels;
+        AperiodicPFC_measures(s).APC_source_all(c).exponent = output.exponent;
+        AperiodicPFC_measures(s).APC_source_all(c).offset = output.offset;         
+    end
+end
+fprintf('done.\n')
+save(output_file, 'AperiodicPFC_measures', '-append');
+
+% export measured variables in a long-format table
+fprintf('exporting data:\n')
+table_export = table;
+row_counter = 1;
+for s = 1:params.subjects
+    for c = 1:length(AperiodicPFC_measures(s).conditions)
+        % identify trials to be removed (based on trials discarded during source-analysis)
+        trials2remove = AperiodicPFC_measures(s).APC_source_all(c).trials_removed;  
+
+        % subset the data, filter out removed trials
+        data = struct;
+        data.exponent = AperiodicPFC_measures(s).APC_source_all(c).exponent;
+        data.offset = AperiodicPFC_measures(s).APC_source_all(c).offset;
+        for a = params.LEP_comps
+            data.LEP.(a{1}).amplitude = AperiodicPFC_measures(s).LEP(c).(a{1}).amplitude;
+            data.LEP.(a{1}).latency = AperiodicPFC_measures(s).LEP(c).(a{1}).latency;
+            data.LEP.(a{1}).amplitude(trials2remove) = [];
+            data.LEP.(a{1}).latency(trials2remove) = [];
+        end
+        data.rating = AperiodicPFC_measures(s).pain(c).ratings;
+        data.rating(trials2remove) = [];
+        
+        % encode to the table
+        for a = 1:length(data.rating)
+            for b = fieldnames(data.LEP)'
+                % subject info
+                table_export.subject(row_counter) = s;
+                table_export.ID{row_counter} = AperiodicPFC_measures(s).ID;
+                table_export.age(row_counter) = AperiodicPFC_measures(s).age;
+                table_export.male(row_counter) = AperiodicPFC_measures(s).male;
+                table_export.handedness{row_counter} = AperiodicPFC_measures(s).handedness;
+
+                % session info
+                table_export.condition(row_counter) = c;
+                table_export.area{row_counter} = AperiodicPFC_measures(s).conditions(c).area;
+                table_export.side{row_counter} = AperiodicPFC_measures(s).conditions(c).side;
+                if strcmp(table_export.handedness{row_counter},table_export.side{row_counter})
+                    table_export.dominant(row_counter) = 1;
+                else
+                    table_export.dominant(row_counter) = 0;
+                end
+                table_export.flipped{row_counter} = AperiodicPFC_measures(s).APC_source(c).flipped;
+                table_export.trial(row_counter) = a;
+
+                % dependent variable: LEP measures
+                table_export.component{row_counter} = b{1};
+                table_export.amplitude(row_counter) = data.LEP.(b{1}).amplitude(a);
+                table_export.latency(row_counter) = data.LEP.(b{1}).latency(a);
+
+                % dependent variable: pain rating
+                table_export.rating(row_counter) = data.rating(a);
+    
+                % independent variable: aperiodic exponent
+                for d = 1: size(data.exponent, 2)
+                    statement = sprintf('table_export.exponent%d(row_counter) = data.exponent(a, d);', d);
+                    eval(statement)
+                end
+
+                % update row counter
+                row_counter = row_counter + 1;
+            end
+        end
+    end
+end
+
+% save table to output structure and as .csv
+AperiodicPFC_export_sources_all = table_export;
+save(output_file, 'AperiodicPFC_export_sources_all', '-append');
+writetable(AperiodicPFC_export_sources_all, 'AperiodicPFC_export_sources_all.csv');
+AperiodicPFC_source_labels = table;
+for a = 1:95
+    AperiodicPFC_source_labels.number(a) = a;
+    AperiodicPFC_source_labels.label{a} = source_labels{a};
+end
+writetable(AperiodicPFC_source_labels, 'AperiodicPFC_source_labels.csv');
+fprintf('done.\n')
+
+% clean and continue
+clear a b c d r s idx data cfg data_trial PSD idx_freq freq data_log freq_log fit output ...
+    sources2remove atlas source_labels idx_source bad_sources bad_numbers ...
+    row_counter table_export trials2remove 
+fprintf('section finished.\n\n')
+
+%% source-space analysis: extract aperiodic exponent per hemisphere
+% ----- section input -----
+params.foi = [5 80];
+params.foi_APC = [30 50];
+params.hemisphere = {'LH' 'RH'};
+params.roi = {'PFC', 'Vis'};
+params.path_atlas = 'Schaefer2018_100Parcels_7Networks_order_FSLMNI152_1mm.Centroid_RAS.csv';
+% -------------------------
+
+% load data if necessary
+if exist('AperiodicPFC_sources') ~= 1 
+    load('AperiodicPFC_sources.mat')
+end
+if exist('AperiodicPFC_quality_check') ~= 1
+    load(output_file, 'AperiodicPFC_quality_check')
+end
+if exist('AperiodicPFC_measures') ~= 1
+    load(output_file, 'AperiodicPFC_measures')
+end
+if exist('AperiodicPFC_data') ~= 1
+    load(output_file, 'AperiodicPFC_data')
+end
+
+% identify target and control sources
+fprintf('selecting ROIs...\n')
+sources2remove = AperiodicPFC_quality_check(1).bad_sources.number;
+atlas = readtable(params.path_atlas);
+source_labels = table2array(atlas(:, 2))';
+source_labels(sources2remove) = [];
+for a = 1:length(params.roi)
+    for b = 1:length(params.hemisphere)
+        idx_source.(params.roi{a}).(params.hemisphere{b}) = false(1, length(source_labels));
+        for c = 1:length(source_labels)
+            if contains(source_labels{c}, params.roi{a}) && contains(source_labels{c}, params.hemisphere{b})
+                idx_source.(params.roi{a}).(params.hemisphere{b})(c) = true;
+            end
+        end
+        if strcmp(params.hemisphere{b}, 'LH')
+            hemisphere = 'left';
+        else
+            hemisphere = 'right';
+        end
+        fprintf('--> %d areas found for the %s network, %s hemisphere.\n', ...
+            sum(idx_source.(params.roi{a}).(params.hemisphere{b})), params.roi{a}, hemisphere)
+    end
+end
+
+% extract aperiodic measures for both ROIs and hemispheres
+fprintf('extracting aperiodic measures..\n')
+ for s = 1:params.subjects  
+    for c = 1:2
+        % encode to the output structure
+        AperiodicPFC_measures(s).APC_source_hemisphere(c).condition = c;
+        AperiodicPFC_measures(s).APC_source_hemisphere(c).flipped = AperiodicPFC_measures(s).APC(c).flipped;
+        AperiodicPFC_measures(s).APC_source_hemisphere(c).trials = AperiodicPFC_data(s).PSD_source(c).trials; 
+        AperiodicPFC_measures(s).APC_source_hemisphere(c).trials_removed = AperiodicPFC_data(s).PSD_source(c).trials_removed;
+        AperiodicPFC_measures(s).APC_source_hemisphere(c).foi = params.foi_APC;
+        
+        % cycle through ROIs and hemispheres
+        for r = 1:length(params.roi)
+            for h = 1:length(params.hemisphere)
+
+                % subset data and average across rois
+                data = AperiodicPFC_data(s).PSD_source(c).fractal(:, idx_source.(params.roi{r}).(params.hemisphere{h}), :); 
+                data = squeeze(mean(data, 2)); 
+    
+                % identify frequencies
+                idx_freq = AperiodicPFC_data(s).PSD_source(c).freq >= params.foi_APC(1) & ...
+                    AperiodicPFC_data(s).PSD_source(c).freq <= params.foi_APC(2);
+                freq = AperiodicPFC_data(s).PSD_source(c).freq(idx_freq);
+    
+                % perform robust linear regression for all trials
+                output.exponent = []; 
+                output.offset = [];
+                for b = 1:size(data, 1)
+                    % subset and log-transform 
+                    data_log = log10(data(b, idx_freq));
+                    freq_log = log10(freq);
+    
+                    % fit for target roi
+                    [fit, ~] = robustfit(freq_log, data_log);
+                    output.exponent(b) = -fit(2);
+                    output.offset(b) = fit(1);
+                end
+    
+                % encode to the output structure
+                AperiodicPFC_measures(s).APC_source_hemisphere(c).sources.(params.roi{r}).(params.hemisphere{h}) = source_labels(idx_source.(params.roi{r}).(params.hemisphere{h}));
+                AperiodicPFC_measures(s).APC_source_hemisphere(c).exponent.(params.roi{r}).(params.hemisphere{h}) = output.exponent;
+                AperiodicPFC_measures(s).APC_source_hemisphere(c).offset.(params.roi{r}).(params.hemisphere{h}) = output.offset;         
+            end
+        end
+    end
+end
+fprintf('done.\n')
+save(output_file, 'AperiodicPFC_measures', '-append');
+
+% export measured variables in a long-format table
+fprintf('exporting data:\n')
+table_export = table;
+row_counter = 1;
+for s = 1:params.subjects
+    for c = 1:length(AperiodicPFC_measures(s).conditions)
+        % identify trials to be removed (based on trials discarded during source-analysis)
+        trials2remove = AperiodicPFC_measures(s).APC_source(c).trials_removed;  
+
+        % subset the data, filter out removed trials
+        data = struct;
+        data.exponent = AperiodicPFC_measures(s).APC_source_hemisphere(c).exponent;
+        data.offset = AperiodicPFC_measures(s).APC_source_hemisphere(c).offset;
+        for a = params.LEP_comps
+            data.LEP.(a{1}).amplitude = AperiodicPFC_measures(s).LEP(c).(a{1}).amplitude;
+            data.LEP.(a{1}).latency = AperiodicPFC_measures(s).LEP(c).(a{1}).latency;
+            data.LEP.(a{1}).amplitude(trials2remove) = [];
+            data.LEP.(a{1}).latency(trials2remove) = [];
+        end
+        data.rating = AperiodicPFC_measures(s).pain(c).ratings;
+        data.rating(trials2remove) = [];
+        
+        % encode to the table
+        for a = 1:length(data.rating)
+            for b = 1:length(params.LEP_comps)
+                for r = 1:length(params.roi)
+                    for h = 1:length(params.hemisphere)
+                        % subject info
+                        table_export.subject(row_counter) = s;
+                        table_export.ID{row_counter} = AperiodicPFC_measures(s).ID;
+                        table_export.age(row_counter) = AperiodicPFC_measures(s).age;
+                        table_export.male(row_counter) = AperiodicPFC_measures(s).male;
+                        table_export.handedness{row_counter} = AperiodicPFC_measures(s).handedness;
+        
+                        % session info
+                        table_export.condition(row_counter) = c;
+                        table_export.area{row_counter} = AperiodicPFC_measures(s).conditions(c).area;
+                        table_export.side{row_counter} = AperiodicPFC_measures(s).conditions(c).side;
+                        if strcmp(table_export.handedness{row_counter},table_export.side{row_counter})
+                            table_export.dominant(row_counter) = 1;
+                        else
+                            table_export.dominant(row_counter) = 0;
+                        end
+                        table_export.flipped{row_counter} = AperiodicPFC_measures(s).APC_source(c).flipped;
+                        table_export.trial(row_counter) = a;
+    
+                        % dependent variable: LEP measures
+                        table_export.component{row_counter} = params.LEP_comps{b};
+                        table_export.amplitude(row_counter) = data.LEP.(params.LEP_comps{b}).amplitude(a);
+                        table_export.latency(row_counter) = data.LEP.(params.LEP_comps{b}).latency(a);
+    
+                        % dependent variable: pain rating
+                        table_export.rating(row_counter) = data.rating(a);
+        
+                        % independent variable: aperiodic measures
+                        table_export.region{row_counter} = sprintf('%s_%s', params.roi{r}, params.hemisphere{h});   
+                        table_export.brain_area{row_counter} = params.roi{r}; 
+                        table_export.hemisphere{row_counter} = params.hemisphere{h}; 
+                        table_export.exponent(row_counter) = data.exponent.(params.roi{r}).(params.hemisphere{h})(a);
+                        table_export.offset(row_counter) = data.offset.(params.roi{r}).(params.hemisphere{h})(a);  
+        
+                        % update row counter
+                        row_counter = row_counter + 1;
+                    end
+                end
+            end
+        end
+    end
+end
+fprintf('done.\n')
+
+% save table to output structure and as .csv
+fprintf('saving... \n')
+AperiodicPFC_export_sources_hemisphere = table_export;
+save(output_file, 'AperiodicPFC_export_sources_hemisphere', '-append');
+writetable(AperiodicPFC_export_sources_hemisphere, 'AperiodicPFC_export_sources_hemisphere.csv');
+fprintf('done.\n')
+
+% clean and continue
+clear a b c d r s idx data cfg data_trial PSD idx_freq freq data_log freq_log fit output ...
+    sources2remove atlas source_labels idx_source bad_sources bad_numbers ...
+    hemisphere row_counter table_export trials2remove 
 fprintf('section finished.\n\n')
 
 %% source-space analysis: visualization 
@@ -1541,4 +2053,180 @@ elec.elecpos = elec.elecpos(elec_temp(elec_new), :);
 elec.label = elec.label(elec_temp(elec_new), :);
 elec.type = 'custom';
 elec.unit = params.elec_template.unit;
+end
+function plot_ERP(input, varargin)
+% =========================================================================
+% plots an event-related potential
+% input = structure with fields:    
+%           data --> condition/electrode * sample
+%           x --> vector with time samples
+%           CI_upper --> condition/electrode * sample
+%           CI_lower --> condition/electrode * sample
+% varargins = name-value pairs: 
+%           xlim --> 2-element vector (min, max)     
+%           ylim --> 2-element vector (min, max) 
+%           colours --> n*3 matrix of RGB values
+%           shading --> 'on'(default)/'off'
+%           alpha --> a float (default 0.2)           
+%           legend --> 'on'(default)/'off'
+%           labels --> cell array with labels for the legend  
+%           legend_loc --> legend location (default 'southeast')
+%           eoi --> label of a channel to be highlighted
+%           reverse --> 'on'/'off'(default) - flips y axis
+%           interpolated --> time window that was interpolated
+% =========================================================================  
+% set defaults
+x_limits = [0,0];
+y_limits = [0,0];
+col = prism(size(input.data, 1));
+shading = true;
+alpha = 0.2;
+plot_legend = true;
+for c = 1:size(input.data, 1)
+    labels{c} = sprintf('condition %d', c);
+end
+legend_loc = 'southeast';
+highlight = false;
+reverse = false;
+interpolate = false;
+
+% check for varargins
+if ~isempty(varargin)
+    % x limits
+    a = find(strcmpi(varargin, 'xlim'));
+    if ~isempty(a)
+        x_limits = varargin{a + 1};
+    end
+
+    % y limits
+    b = find(strcmpi(varargin, 'ylim'));
+    if ~isempty(b)
+        y_limits = varargin{b + 1};
+    end
+
+    % colours
+    c = find(strcmpi(varargin, 'colours'));
+    if ~isempty(c)
+        col = varargin{c + 1};
+    end
+
+    % shading - default on
+    d = find(strcmpi(varargin, 'shading'));
+    if ~isempty(d) && strcmp(varargin{d + 1}, 'off')
+        shading = false;
+    end
+
+    % alpha
+    e = find(strcmpi(varargin, 'alpha'));
+    if ~isempty(e)
+        alpha = varargin{e + 1};
+    end
+
+    % legend - default on
+    f = find(strcmpi(varargin, 'legend'));
+    if ~isempty(f) && strcmp(varargin{f + 1}, 'off')
+        plot_legend = false;
+    end    
+
+    % labels
+    g = find(strcmpi(varargin, 'labels'));
+    if ~isempty(g)
+        labels = varargin{g + 1};
+    end
+
+    % legend location
+    h = find(strcmpi(varargin, 'legend_loc'));
+    if ~isempty(h) 
+        legend_loc = varargin{h + 1};
+    end  
+
+    % highlighted channel - default off
+    i = find(strcmpi(varargin, 'eoi'));
+    if ~isempty(i)
+        eoi = varargin{i + 1};
+        eoi_n = find(contains(input.chanlabels, eoi));
+        highlight = true;
+    end 
+
+    % interpolated interval - default off
+    j = find(strcmpi(varargin, 'interpolated'));
+    if ~isempty(j)
+        interpolate_toi = varargin{j + 1};
+        interpolate = true;
+    end 
+
+    % reverse y axis - default off
+    r = find(strcmpi(varargin, 'reverse'));
+    if ~isempty(r) && strcmp(varargin{r + 1}, 'on')
+        reverse = true;
+    end
+end
+
+% loop through datasets to plot
+for t = 1:size(input.data, 1) 
+    P(t) = plot(input.x, input.data(t, :), 'Color', col(t, :), 'LineWidth', 2);
+    hold on
+    if shading
+        F(t) = fill([input.x fliplr(input.x)],[input.CI_upper(t, :) fliplr(input.CI_lower(t, :))], ...
+            col(t, :), 'FaceAlpha', alpha, 'linestyle', 'none');
+        hold on
+    end
+end
+
+% check y limits
+if y_limits(1) == 0 && y_limits(2) == 0
+    y_limits = ylim;
+end
+
+% highlight channel if required
+if highlight
+    P(end + 1) = plot(input.x, input.data(eoi_n, :), 'Color', [0.9216    0.1490    0.1490], 'LineWidth', 4);
+    hold on
+end
+
+% shade interpolated window if required
+if interpolate
+    interpolate_x = [interpolate_toi(1), interpolate_toi(2), interpolate_toi(2), interpolate_toi(1)];
+    interpolate_y = [y_limits(1), y_limits(1), y_limits(2), y_limits(2)];
+    fill(interpolate_x, interpolate_y, [0.5 0.5 0.5], 'FaceAlpha', 0.5, 'EdgeColor', 'none');
+end
+
+% plot stimulus
+line([0, 0], y_limits, 'Color', 'black', 'LineWidth', 2.5, 'LineStyle', '--')
+
+% plot legend if required
+if plot_legend 
+    legend(P, labels, 'Location', legend_loc, 'fontsize', 14)
+    legend('boxoff');
+else
+    legend('off')
+end
+
+% axes
+box off;
+ax = gca;
+ax.XAxisLocation = 'bottom';
+ax.YAxisLocation = 'left';
+ax.TickDir = 'out'; 
+ax.XColor = [0.5020    0.5020    0.5020]; 
+ax.YColor = [0.5020    0.5020    0.5020]; 
+
+% set x limits 
+if x_limits(1) == 0 && x_limits(2) == 0
+    xlim([input.x(1), input.x(end)]) 
+else
+    xlim(x_limits)
+end
+
+% referse y axis if required
+if reverse
+    set(gca, 'YDir', 'reverse');
+end
+
+% other parameters
+xlabel('time (s)')
+ylabel('amplitude (\muV)')
+set(gca, 'FontSize', 14)
+ylim(y_limits)
+set(gca, 'Layer', 'Top')
 end

@@ -186,7 +186,7 @@ Here, the collected data is used to investigate, whether the momentary excitabil
 ## DATA IMPORT
 ```{r,message=FALSE,warning=FALSE}
 # read .csv files
-data_all <- read_csv(file.path(wd_path, paste0('AperiodicPFC_export_sources.csv')))
+data_all <- read_csv(file.path(wd_path, paste0('AperiodicPFC_export_sources_hemisphere.csv')))
 data2exclude <- read_csv2(file.path(wd_path, 'AperiodicPFC_data2exclude.csv'))
 data2exclude <- data2exclude %>%
   filter(!is.na(subject))
@@ -199,7 +199,9 @@ summary(data_all)
 data_all <- data_all %>%
   mutate(across(where(~!is.numeric(.)), as.factor)) %>% 
   filter(latency > 0) %>% 
-  mutate(region = if_else(region == "Vis", "Visual", region))
+  mutate(region = if_else(region == "Vis_LH", "Visual_LH", region)) %>% 
+  mutate(region = if_else(region == "Vis_RH", "Visual_RH", region)) %>% 
+  mutate(brain_area = if_else(brain_area == "Vis", "Visual", brain_area))
 data_all <- data_all %>%
   group_by(subject) %>%
   mutate(
@@ -277,8 +279,7 @@ for (comp in components) {
       # filter the data for the current component and area
       data_LEPs <- data_all %>% 
         filter(component == !!comp) %>% 
-        filter(area == !!ar) %>% 
-        filter(region == !!'PFC')
+        filter(area == !!ar) 
       
       # summarize and plot
       output <- summarize_and_plot(data_LEPs, var)
@@ -305,21 +306,16 @@ for (ar in areas) {
   for (var in variables) {
       # filter the data for the current peak
       data_LEPs <- data_all %>% 
-        filter(area == !!ar) %>% 
-        filter(region == !!'PFC')
+        filter(area == !!ar) 
       
       # summarize and plot
       output <- summarize_and_plot(data_LEPs, var, group_vars = 'component')
       
       # display distribution
       print(output$dist_plot_group)
-      # save_plot(paste0(wd_path, '\\figures\\LEP_', ar, '_', var, "_distribution_all.svg"), output$dist_plot_group)
+      save_plot(paste0(wd_path, '\\figures\\LEP_', ar, '_', var, "_distribution_all.svg"), output$dist_plot_group)
       
       # display boxplot
-      if(var == "amplitude") {
-        output$boxplot_group <- output$boxplot_group %>%
-          + coord_cartesian(ylim = c(-40, 40)) 
-    }
       print(output$boxplot_group)
       save_plot(paste0(wd_path, '\\figures\\LEP_', ar, '_', var, "_boxplot_all.svg"), output$boxplot_group)
   }
@@ -346,9 +342,7 @@ for (ar in areas) {
   for (var in variables) {
     # filter the data for the current area
     data_ratings <- data_all %>% 
-      filter(area == !!ar) %>% 
-      filter(region == !!'PFC') %>% 
-      filter(component == !!'N2') 
+      filter(area == !!ar) 
   
     #  summarize and plot
     output <- summarize_and_plot(data_ratings, var)
@@ -367,13 +361,8 @@ for (ar in areas) {
 
 # loop through variables, group by areas
 for (var in variables) {
-    # filter the data for the current area
-    data_ratings <- data_all %>% 
-      filter(region == !!'PFC') %>% 
-      filter(component == !!'N2') 
-    
     # summarize and plot
-    output <- summarize_and_plot(data_ratings, var, group_vars = 'area')
+    output <- summarize_and_plot(data_all, var, group_vars = 'area')
     
     # display distribution
     print(output$dist_plot_group)
@@ -390,7 +379,7 @@ rm(areas, variables, ar, var, data_ratings, output)
 ```{r}
 # define variables
 areas <- c('hand', 'foot')
-regions <- c('PFC', 'Visual')
+regions <- c('PFC_LH', 'PFC_LH', 'Visual_LH', 'Visual_LH')
 variables <- c('exponent', 'offset')
 
 # prepare outcome df
@@ -409,8 +398,7 @@ for (ar in areas) {
       # filter the data for the current area and brain region
       data_APC <- data_all %>% 
         filter(area == !!ar) %>%
-        filter(region == !!reg) %>% 
-        filter(component == !!'N2')
+        filter(region == !!reg) 
       
       # summarize and plot
       output <- summarize_and_plot(data_APC, var)
@@ -425,8 +413,8 @@ for (ar in areas) {
                 sem = output$summary_stats$sem)
     
       # save the plots as SVG files
-      save_plot(paste0(wd_path, '\\figures\\APC-source_', ar, '_', var, "_", reg, "_distribution.svg"), output$dist_plot)
-      save_plot(paste0(wd_path, '\\figures\\APC-source_', ar, '_', var, "_", reg, "_subjects.svg"), output$dot_plot)
+      # save_plot(paste0(wd_path, '\\figures\\APC-source_', ar, '_', var, "_", reg, "_distribution.svg"), output$dist_plot)
+      # save_plot(paste0(wd_path, '\\figures\\APC-source_', ar, '_', var, "_", reg, "_subjects.svg"), output$dot_plot)
     }
   }
 }
@@ -437,8 +425,7 @@ for (ar in areas) {
   for (var in variables) {
       # filter the data for the current peak
       data_APC <- data_all %>%
-        filter(area == !!ar)%>% 
-        filter(component == !!'N2')
+        filter(area == !!ar)
       
       # summarize and plot
       output <- summarize_and_plot(data_APC, var, group_vars = 'region')
@@ -446,30 +433,26 @@ for (ar in areas) {
       
       # display distribution
       print(output$dist_plot_group)
-      save_plot(paste0(wd_path, '\\figures\\APC-source_', ar, '_', var,  "_distribution_all.svg"), output$dist_plot_group)
+      # save_plot(paste0(wd_path, '\\figures\\APC-source_', ar, '_', var,  "_distribution_all.svg"), output$dist_plot_group)
       
       # display boxplot
       print(output$boxplot_group)
-      save_plot(paste0(wd_path, '\\figures\\APC-source_', ar, '_', var,  "_boxplot_all.svg"), output$boxplot_group)
+      # save_plot(paste0(wd_path, '\\figures\\APC-source_', ar, '_', var,  "_boxplot_all.svg"), output$boxplot_group)
   }
 }
 
 # loop through variables, group by regions
 for (var in variables) {
-    # filter the data for the current peak
-    data_APC <- data_all %>%
-      filter(component == !!'N2')
-      
     # summarize and plot
-    output <- summarize_and_plot(data_APC, var, group_vars = 'region')
+    output <- summarize_and_plot(data_all, var, group_vars = 'region')
     
     # display distribution
     print(output$dist_plot_group)
-    save_plot(paste0(wd_path, '\\figures\\APC-source_avg_', var,  "_distribution_all.svg"), output$dist_plot_group)
+    # save_plot(paste0(wd_path, '\\figures\\APC-source_avg_', var,  "_distribution_all.svg"), output$dist_plot_group)
     
     # display boxplot
     print(output$boxplot_group)
-    save_plot(paste0(wd_path, '\\figures\\APC-source_avg_', var,  "_boxplot_all.svg"), output$boxplot_group)
+    # save_plot(paste0(wd_path, '\\figures\\APC-source_avg_', var,  "_boxplot_all.svg"), output$boxplot_group)
 }
 rm(areas, regions, variables, ar, reg, var, data_APC, output)
 ```
@@ -520,7 +503,7 @@ model_log <- lmer(amplitude_log ~ exponent * region + area + (1 | subject),
   data = data)
 anova(model_log)
 anova_table <- anova(model_log)
-view(anova_table)
+# view(anova_table)
 outliers <- check_model(model_log, data)
 ```
 
@@ -555,7 +538,7 @@ outliers <- check_model(model_full, data)
 model_interaction <- lmer(latency ~ exponent * region + area + (1 | subject), data = data)
 anova(model_interaction)
 anova_table <- anova(model_interaction)
-view(anova_table)
+# view(anova_table)
 outliers <- check_model(model_interaction, data)
 
 # compare models
@@ -608,7 +591,7 @@ model_log <- lmer(amplitude_log ~ exponent * region + area + (1 | subject),
   data = data)
 anova(model_log)
 anova_table <- anova(model_log)
-view(anova_table)
+# view(anova_table)
 outliers <- check_model(model_log, data)
 ```
 
@@ -643,7 +626,7 @@ outliers <- check_model(model_full, data)
 model_interaction <- lmer(latency ~ exponent * region + area + (1 | subject), data = data)
 anova(model_interaction)
 anova_table <- anova(model_interaction)
-view(anova_table)
+# view(anova_table)
 outliers <- check_model(model_interaction, data)
 
 # compare models
@@ -696,7 +679,7 @@ model_log <- lmer(amplitude_log ~ exponent * region + area + (1 | subject),
   data = data)
 anova(model_log)
 anova_table <- anova(model_log)
-view(anova_table)
+# view(anova_table)
 outliers <- check_model(model_log, data)
 ```
 
@@ -731,7 +714,7 @@ outliers <- check_model(model_full, data)
 model_interaction <- lmer(latency ~ exponent * region + area + (1 | subject), data = data)
 anova(model_interaction)
 anova_table <- anova(model_interaction)
-view(anova_table)
+# view(anova_table)
 outliers <- check_model(model_interaction, data)
 
 # compare models
@@ -744,7 +727,7 @@ AIC(model_null, model_basic, model_full, model_interaction)
 # subset the dataset
 data <- data_all %>%
   filter(component == "N2") %>% 
-  select(c('subject', 'age', 'component', 'dominant', 'area', 'region', 'rating', 'rating_norm', 'exponent', 'offset')) 
+  select(c('subject', 'age', 'component', 'dominant', 'area', 'brain_area', 'region', 'rating', 'rating_norm', 'exponent', 'offset')) 
 
 # check for multicollinearity predictors --> Variance Inflation Factors (VIF)
 lm_check <- lm(rating ~ exponent + offset + region + area, data = data)
@@ -770,23 +753,23 @@ outliers <- check_model(model_full, data)
 model_interaction <- lmer(rating ~ exponent * region + area + (1 | subject), data = data)
 anova(model_interaction)
 anova_table <- anova(model_interaction)
-view(anova_table)
+# view(anova_table)
 outliers <- check_model(model_interaction, data)
 
 # compare models
 anova(model_null, model_basic, model_full, model_interaction)
 AIC(model_null, model_basic, model_full, model_interaction)
 
-# try computing a separate model for the brain regions
+# try computing a separate model for the brain areas
 data_PFC <- data %>% 
-  filter(region == "PFC")
-model_PFC <- lmer(rating ~ exponent + area + (1 | subject), data = data_PFC)
+  filter(brain_area == "PFC")
+model_PFC <- lmer(rating ~ exponent * region + area + (1 | subject), data = data_PFC)
 anova(model_PFC)
 outliers <- check_model(model_PFC, data_PFC)
 
 data_visual <- data %>% 
-  filter(region == "visual")
-model_visual <- lmer(rating ~ exponent + area + (1 | subject), data = data_visual)
+  filter(brain_area == "Visual")
+model_visual <- lmer(rating ~ exponent * region + area + (1 | subject), data = data_visual)
 anova(model_visual)
 outliers <- check_model(model_visual, data_visual)
 
